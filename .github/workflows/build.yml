@@ -1,0 +1,19 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rojo-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rojo
+        run: |
+          curl -sSL -o rojo.zip https://github.com/rojo-rbx/rojo/releases/download/v7.4.4/rojo-7.4.4-linux-x86_64.zip
+          unzip -q rojo.zip -d "$HOME/.rojo"
+          echo "$HOME/.rojo" >> "$GITHUB_PATH"
+      - name: Build place
+        run: rojo build -o aetherwake.rbxlx

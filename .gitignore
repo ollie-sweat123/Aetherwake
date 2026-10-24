@@ -1,0 +1,11 @@
+# Built places and models (build output, never commit)
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+*.lock
+
+# Editor / tooling
+sourcemap.json
+.DS_Store
+Thumbs.db
