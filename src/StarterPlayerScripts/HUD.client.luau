@@ -821,16 +821,33 @@ local refreshFuseCost: () -> () = function() end -- set by the Fuse panel below
 ----------------------------------------------------------------------------
 do
 	local panel, body = makePanel("Champions", "Champions", Color3.fromRGB(255, 120, 90), Vector2.new(840, 580))
-	local info = label({ Text = "", Size = UDim2.new(0.6, 0, 0, 30), TextXAlignment = Enum.TextXAlignment.Left, Parent = body })
+	local info = label({ Text = "", Size = UDim2.new(1, -370, 0, 30), TextXAlignment = Enum.TextXAlignment.Left, Parent = body })
 	button({ Color = THEME.green, Text = "Equip Best", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, -4), Size = UDim2.fromOffset(170, 42), Parent = body }, function()
 		Remotes.EquipBest:InvokeServer()
 	end)
+	local cardGrid = new("UIGridLayout", { CellSize = UDim2.fromOffset(112, 140), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder })
 	local list = new("ScrollingFrame", { BackgroundColor3 = THEME.panel2, Position = UDim2.fromOffset(0, 44), Size = UDim2.new(1, 0, 1, -172),
 		ScrollBarThickness = 8, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), BorderSizePixel = 0, Parent = body }, {
 		corner(14),
-		new("UIGridLayout", { CellSize = UDim2.fromOffset(112, 140), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }),
+		cardGrid,
 		new("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10) }),
 	})
+	-- View More: a bigger panel with smaller cards, so about 4x as many champions fit on screen
+	-- (quicker to find the ones to release). Only this panel has it; it stays on until turned off.
+	local CARD_NORMAL = { panel = Vector2.new(840, 580), cell = Vector2.new(112, 140), gap = 10, pic = 92, name = 96, nameH = 20, power = 116, powerH = 20, starW = 70, starH = 18, tag = 30 }
+	local CARD_DENSE = { panel = Vector2.new(1180, 650), cell = Vector2.new(84, 104), gap = 8, pic = 66, name = 70, nameH = 16, power = 86, powerH = 15, starW = 56, starH = 14, tag = 22 }
+	local expanded = false
+	local expandBtn
+	expandBtn = button({ Name = "ExpandButton", Color = THEME.gem, Text = "View More", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -180, 0, -4),
+		Size = UDim2.fromOffset(170, 42), Parent = body }, function()
+		expanded = not expanded
+		local L = if expanded then CARD_DENSE else CARD_NORMAL
+		expandBtn.Text = if expanded then "View Less" else "View More"
+		panel.Size = UDim2.fromOffset(L.panel.X, L.panel.Y)
+		cardGrid.CellSize = UDim2.fromOffset(L.cell.X, L.cell.Y)
+		cardGrid.CellPadding = UDim2.fromOffset(L.gap, L.gap)
+		refreshers.Champions()
+	end)
 	local detail = new("Frame", { BackgroundColor3 = THEME.panel2, AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1),
 		Size = UDim2.new(1, 0, 0, 118), Parent = body }, { corner(14) })
 	local detailPic = new("Frame", { BackgroundColor3 = THEME.panel, Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(102, 102), Parent = detail }, { corner(12) })
@@ -982,21 +999,22 @@ do
 			if a.power ~= b.power then return a.power > b.power end
 			return a.uid < b.uid
 		end)
+		local L = if expanded then CARD_DENSE else CARD_NORMAL
 		for i, item in items do
 			local r = rarityOf(item.def.id)
 			local isOn = table.find(equipped, item.uid) ~= nil
 			local card = new("TextButton", { Text = "", AutoButtonColor = true, LayoutOrder = i, BackgroundColor3 = r.color:Lerp(THEME.panel, 0.55), Parent = list },
 				{ corner(14), stroke(selected == item.uid and 5 or 3, selected == item.uid and Color3.new(1, 1, 1) or r.color) })
-			viewport(item.def.id, card, UDim2.new(1, 0, 0, 92), UDim2.fromOffset(0, 4))
-			label({ Text = displayName(item.owned), Size = UDim2.new(1, -8, 0, 20), Position = UDim2.new(0, 4, 0, 96), Parent = card })
+			viewport(item.def.id, card, UDim2.new(1, 0, 0, L.pic), UDim2.fromOffset(0, 4))
+			label({ Text = displayName(item.owned), Size = UDim2.new(1, -8, 0, L.nameH), Position = UDim2.new(0, 4, 0, L.name), Parent = card })
 			local stars = starsOf(item.owned)
 			if stars > 0 then
-				label({ Text = starText(stars), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -5, 0, 5), Size = UDim2.fromOffset(70, 18),
+				label({ Text = starText(stars), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -5, 0, 5), Size = UDim2.fromOffset(L.starW, L.starH),
 					TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = THEME.gold, Parent = card })
 			end
-			label({ Text = "⚔ " .. Format.Short(item.power), Size = UDim2.new(1, -8, 0, 20), Position = UDim2.new(0, 4, 0, 116), TextColor3 = THEME.red, Parent = card })
+			label({ Text = "⚔ " .. Format.Short(item.power), Size = UDim2.new(1, -8, 0, L.powerH), Position = UDim2.new(0, 4, 0, L.power), TextColor3 = THEME.red, Parent = card })
 			if isOn then
-				local tag = new("Frame", { BackgroundColor3 = THEME.green, Size = UDim2.fromOffset(30, 30), Position = UDim2.fromOffset(4, 4), Parent = card }, { corner(15), stroke(2) })
+				local tag = new("Frame", { BackgroundColor3 = THEME.green, Size = UDim2.fromOffset(L.tag, L.tag), Position = UDim2.fromOffset(4, 4), Parent = card }, { corner(L.tag / 2), stroke(2) })
 				label({ Text = "✓", Size = UDim2.fromScale(1, 1), Parent = tag })
 			end
 			card.Activated:Connect(function() playUiSound("click"); selected = item.uid; refreshers.Champions() end)
