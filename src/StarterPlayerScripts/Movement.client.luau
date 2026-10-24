@@ -2,6 +2,9 @@
 --   * Q (or the round DASH button on phones) = quick burst in the direction you're moving.
 --     Charges come from the DashCharges attribute (upgrade in the Upgrades menu).
 --   * Press jump again in the air for a double jump. JumpCount = total jumps (2 = double, 3 = triple).
+--   * Sprint: hold Left Ctrl (keyboard) or click the left stick (controller). The SERVER sets the
+--     speed (SettingsService: the Sprint Speed setting, or always with Auto-Sprint on); this only
+--     tells it while the key is held (Remotes.SetSprint).
 --   * AFK: Roblox kicks idle players after 20 minutes, so after 16 idle minutes we ask the
 --     server (AfkRejoin) to rejoin us. The server keeps our world, spot and auto toggles.
 -- Movement runs on the client because the player owns their character's physics,
@@ -232,6 +235,27 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	-- proximity prompt uses it, so a dash there would fire whenever you talk or summon)
 	if input.KeyCode == Enum.KeyCode.Q or input.KeyCode == Enum.KeyCode.ButtonR2 then dash() end
 end)
+
+----------------------------------------------------------------------------
+-- sprint (hold)
+----------------------------------------------------------------------------
+local SPRINT_KEYS = { [Enum.KeyCode.LeftControl] = true, [Enum.KeyCode.ButtonL3] = true }
+local sprintHeld = false
+local function setSprint(on: boolean)
+	if on == sprintHeld then return end
+	sprintHeld = on
+	local remote = Remotes:FindFirstChild("SetSprint")
+	if remote and remote:IsA("RemoteEvent") then remote:FireServer(on) end
+end
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if SPRINT_KEYS[input.KeyCode] then setSprint(true) end
+end)
+UserInputService.InputEnded:Connect(function(input)
+	if SPRINT_KEYS[input.KeyCode] then setSprint(false) end
+end)
+-- (a key let go while the game window wasn't focused never sends InputEnded)
+UserInputService.WindowFocusReleased:Connect(function() setSprint(false) end)
 
 ----------------------------------------------------------------------------
 -- multi-jump
