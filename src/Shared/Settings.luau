@@ -9,13 +9,14 @@
 --   section  which part of the menu it sits in
 --   status   "live" = works now; "soon" = shown greyed out with COMING SOON (the game system
 --            doesn't exist yet, so the row can't do anything); "always" = always on, nothing to change
+--   panel    (optional) shown inside that Config panel instead of the main list
 -- Menu rows that are buttons (Config) are listed in Settings.Configs.
 
 local Settings = {}
 
 export type Def = {
 	key: string, label: string, kind: string, default: any, section: string, status: string,
-	min: number?, max: number?, step: number?, suffix: string?, options: { string }?, hint: string?,
+	min: number?, max: number?, step: number?, suffix: string?, options: { string }?, hint: string?, panel: string?,
 }
 
 Settings.Sections = { "Graphics", "Notifications", "Sound", "Gameplay" }
@@ -38,9 +39,9 @@ Settings.List = {
 		hint = "Off: other players' abilities look like normal hits." },
 
 	-- NOTIFICATIONS -------------------------------------------------------------------------
-	{ key = "GlobalPullAnnounce", label = "Global Rare Summon Announcements", kind = "toggle", default = true, section = "Notifications", status = "soon",
+	{ key = "GlobalPullAnnounce", label = "Allow Global Rare Summon Announcements", kind = "toggle", default = true, section = "Notifications", status = "soon",
 		hint = "Server-wide messages when someone summons a Mythic." },
-	{ key = "SelfPullAnnounce", label = "Self Rare Summon Announcements", kind = "toggle", default = true, section = "Notifications", status = "live",
+	{ key = "SelfPullAnnounce", label = "Allow Self Rare Summon Announcements", kind = "toggle", default = true, section = "Notifications", status = "live",
 		hint = "The big LEGENDARY! / MYTHIC! banner when Auto Hatch gets you one." },
 	{ key = "HideTags", label = "Hide Leaderboard Tags", kind = "toggle", default = false, section = "Notifications", status = "soon",
 		hint = "Leaderboard tags above players' heads are not in the game yet." },
@@ -48,11 +49,11 @@ Settings.List = {
 		hint = "Leaderboard tags above players' heads are not in the game yet." },
 
 	-- SOUND ---------------------------------------------------------------------------------
-	{ key = "MusicVolume", label = "Music", kind = "slider", default = 70, min = 0, max = 100, step = 1, suffix = "%", section = "Sound", status = "live",
+	{ key = "MusicVolume", label = "Music Volume", kind = "slider", default = 70, min = 0, max = 100, step = 1, suffix = "%", section = "Sound", status = "live",
 		hint = "No music tracks are in the game yet; this volume is ready for them." },
-	{ key = "AmbienceVolume", label = "Ambience", kind = "slider", default = 70, min = 0, max = 100, step = 1, suffix = "%", section = "Sound", status = "live",
+	{ key = "AmbienceVolume", label = "Ambience Volume", kind = "slider", default = 70, min = 0, max = 100, step = 1, suffix = "%", section = "Sound", status = "live",
 		hint = "No ambience tracks are in the game yet; this volume is ready for them." },
-	{ key = "GuiVolume", label = "GUI & Effects", kind = "slider", default = 100, min = 0, max = 100, step = 1, suffix = "%", section = "Sound", status = "live",
+	{ key = "GuiVolume", label = "GUI Volume", kind = "slider", default = 100, min = 0, max = 100, step = 1, suffix = "%", section = "Sound", status = "live",
 		hint = "Button clicks, summon sounds and travel swooshes." },
 
 	-- GAMEPLAY ------------------------------------------------------------------------------
@@ -63,19 +64,21 @@ Settings.List = {
 	{ key = "AutoClick", label = "Auto Click", kind = "toggle", default = true, section = "Gameplay", status = "always",
 		hint = "Not needed: your champions attack on their own. Clicking only picks the target (or use Auto Attack)." },
 	{ key = "AttackPriority", label = "Auto Attack Target", kind = "choice", default = "Nearest", options = { "Nearest", "Bosses First", "Weakest", "Strongest" },
-		section = "Gameplay", status = "live", hint = "Which enemy Auto Attack picks next." },
+		section = "Gameplay", status = "live", panel = "AutoAttackConfig", hint = "Which enemy Auto Attack picks next." },
 	{ key = "AutoSprint", label = "Auto-Sprint", kind = "toggle", default = false, section = "Gameplay", status = "live",
 		hint = "Always sprint. Off: hold Left Ctrl (keyboard) or click the left stick (controller) to sprint." },
 	{ key = "SprintSpeed", label = "Sprint Speed", kind = "slider", default = 60, min = 0, max = 100, step = 1, suffix = "%", section = "Gameplay", status = "live",
-		hint = "0% = walking pace (16), 60% = 27, 100% = 34 studs per second." },
+		hint = "How fast you sprint, in studs per second (walking is 16)." },
 } :: { Def }
 
 -- The Config buttons (Gameplay). status as above; the menu opens a panel for "live" ones.
 Settings.Configs = {
-	{ key = "AutoAttackConfig", label = "Auto Attack Config", status = "live" },
-	{ key = "OrbConfig", label = "Orb Config", status = "live" },
-	{ key = "GearConfig", label = "Gear Config", status = "soon" },
-	{ key = "RuneConfig", label = "Rune Config", status = "soon" },
+	{ key = "AutoAttackConfig", label = "Auto Attack", status = "live",
+		hint = "Switch Auto Attack on or off and choose which enemy it picks." },
+	{ key = "OrbConfig", label = "Orb Config", status = "live",
+		hint = "Pick champions to delete automatically when you summon them." },
+	{ key = "GearConfig", label = "Gear Config", status = "soon", hint = "Gear is not in the game yet." },
+	{ key = "RuneConfig", label = "Rune Config", status = "soon", hint = "Runes are not in the game yet." },
 }
 
 Settings.ByKey = {} :: { [string]: Def }
@@ -87,6 +90,13 @@ Settings.SprintMax = 34 -- (champions follow at up to 34 studs/s, so they keep u
 function Settings.SprintWalkSpeed(percent: number): number
 	local p = math.clamp(percent, 0, 100) / 100
 	return math.floor(Settings.WalkSpeed + (Settings.SprintMax - Settings.WalkSpeed) * p + 0.5)
+end
+
+-- The text a slider shows next to it: Sprint Speed shows the real speed, the rest "<value><suffix>".
+function Settings.Display(key: string, value: number): string
+	if key == "SprintSpeed" then return tostring(Settings.SprintWalkSpeed(value)) end
+	local d = Settings.ByKey[key]
+	return tostring(value) .. (d and d.suffix or "")
 end
 
 -- Auto-delete: champions picked in Orb Config are deleted the moment you summon them, and you

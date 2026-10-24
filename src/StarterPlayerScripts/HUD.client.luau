@@ -366,7 +366,8 @@ gridButton(4, "🌀", "Teleport", function() togglePanel("Worlds") end)
 gridButton(5, "⏫", "Upgrades", function() togglePanel("Upgrades") end)
 gridButton(6, "📜", "Quests", function() togglePanel("Quests") end)
 gridButton(7, "📰", "Updates", function() togglePanel("Updates") end)
-gridButton(8, "⚙️", "Settings", soon("Settings"))
+-- (the Settings window is built by the SettingsMenu script, which registers it as a panel)
+gridButton(8, "⚙️", "Settings", function() if panels.Settings then togglePanel("Settings") else soon("Settings")() end end)
 gridButton(9, "❓", "Help", function() togglePanel("Help") end)
 
 ----------------------------------------------------------------------------
@@ -544,6 +545,12 @@ new("BindableFunction", { Name = "Command", Parent = gui }).OnInvoke = function(
 		pressAutoAttack()
 	elseif command == "toast" and type(arg) == "string" then
 		toast(arg, THEME.orange)
+	elseif command == "register" and typeof(arg) == "Instance" and arg:IsA("Frame") and arg.Parent == canvas then
+		-- another client script's menu (SettingsMenu) joins the panel system: opens and closes
+		-- like makePanel's panels. It needs an "OpenScale" UIScale, like they have.
+		if not arg:FindFirstChild("OpenScale") then new("UIScale", { Name = "OpenScale", Parent = arg }) end
+		panels[arg.Name] = arg
+		return true
 	end
 	return nil
 end
@@ -775,6 +782,7 @@ local function rarityAtLeast(rarityId: any, threshold: string): boolean
 end
 -- "LEGENDARY!" / "MYTHIC!" toast for a great pull
 local function bigPullToast(rarityId: string, name: string, color: Color3)
+	if player:GetAttribute("Pref_SelfPullAnnounce") == false then return end -- (Settings: Allow Self Rare Summon Announcements)
 	if rarityAtLeast(rarityId, "Mythic") then
 		toast("MYTHIC! " .. name, color)
 	elseif rarityAtLeast(rarityId, "Legendary") then
@@ -4465,8 +4473,11 @@ end
 Remotes.Notify.OnClientEvent:Connect(function(kind, info)
 	if kind == "Reward" and type(info) == "table" and typeof(info.position) == "Vector3" then
 		local gems = tonumber(info.gems) or 0
-		floatText(info.position + Vector3.new(0, 3, 0), "+$" .. Format.Short(tonumber(info.coins) or 0), THEME.gold, info.boss)
-		if gems > 0 then floatText(info.position + Vector3.new(0, 4.5, 0), "+◆" .. gems, THEME.gem, true) end
+		-- (Settings: Show Coin Popups; the boss reward card always shows)
+		if player:GetAttribute("Pref_CoinPopups") ~= false then
+			floatText(info.position + Vector3.new(0, 3, 0), "+$" .. Format.Short(tonumber(info.coins) or 0), THEME.gold, info.boss)
+			if gems > 0 then floatText(info.position + Vector3.new(0, 4.5, 0), "+◆" .. gems, THEME.gem, true) end
+		end
 		if info.boss then bossRewardPopup(info) end
 	end
 end)

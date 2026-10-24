@@ -25,6 +25,12 @@ local folder = Instance.new("Folder")
 folder.Name = "ClientChampions"
 folder.Parent = workspace
 
+-- Player settings (the Settings menu; SettingsService publishes them as "Pref_<key>").
+-- Before the save has loaded they're nil, which counts as the default.
+local function pref(key: string): any
+	return localPlayer:GetAttribute("Pref_" .. key)
+end
+
 local RARITY_AURA = {
 	Epic = { rate = 6 }, Legendary = { rate = 12, light = true }, Mythic = { rate = 22, light = true, rainbow = true },
 }
@@ -153,7 +159,7 @@ end
 
 local function addAura(c: Champ, rarity: any)
 	local a = RARITY_AURA[rarity.id]
-	if not a then return end
+	if not a or pref("HideAuras") == true then return end
 	local att = Instance.new("Attachment"); att.Position = Vector3.new(0, -2.6, 0); att.Parent = c.root
 	local pe = Instance.new("ParticleEmitter")
 	pe.Color = a.rainbow and ColorSequence.new({
@@ -213,6 +219,7 @@ end
 local function rebuild(p: Player)
 	for _, c in champs[p] or {} do stopBarTweens(c); c.model:Destroy() end
 	champs[p] = {}
+	if p ~= localPlayer and pref("RenderOthers") == false then return end -- (Settings: Render Other Champions)
 	local ids = string.split((p:GetAttribute("EquippedIds") or "") :: string, ",")
 	for i, id in ids do
 		if id ~= "" then
@@ -238,6 +245,17 @@ local function watch(p: Player)
 end
 for _, p in Players:GetPlayers() do task.spawn(watch, p) end
 Players.PlayerAdded:Connect(watch)
+-- the two settings that change what gets built: rebuild the champions they affect
+localPlayer:GetAttributeChangedSignal("Pref_RenderOthers"):Connect(function()
+	for _, p in Players:GetPlayers() do
+		if p ~= localPlayer and champs[p] then rebuild(p) end
+	end
+end)
+localPlayer:GetAttributeChangedSignal("Pref_HideAuras"):Connect(function()
+	for _, p in Players:GetPlayers() do
+		if champs[p] then rebuild(p) end
+	end
+end)
 Players.PlayerRemoving:Connect(function(p)
 	for _, c in champs[p] or {} do stopBarTweens(c); c.model:Destroy() end
 	champs[p] = nil
@@ -867,9 +885,9 @@ local function startCastFx(c: Champ, ctx: any, impactTime: number)
 	end
 	-- 2) anticipation glint at the weapon (or the hand): "something's coming"
 	Fx.Glint(ctx.weapon() or ctx.part("RightHand") or c.root, ctx.accent)
-	-- 3) ultimates: cut-in + FOV punch, only on the owner's own screen
+	-- 3) ultimates: cut-in + FOV punch, only on the owner's own screen (not with Disable Ability VFX)
 	--    (own thread: the first call may have to require SummonCinematic)
-	if ultimate and ctx.isMine then task.spawn(playUltimateIntro, c, ctx) end
+	if ultimate and ctx.isMine and pref("LiteAbilityVfx") ~= true then task.spawn(playUltimateIntro, c, ctx) end
 end
 
 ----------------------------------------------------------------------------
@@ -889,7 +907,10 @@ Remotes:WaitForChild("ChampionAction").OnClientEvent:Connect(function(msg)
 	end
 	local target = typeof(msg.tg) == "string" and enemies:FindFirstChild(msg.tg)
 	if not target or not target.PrimaryPart then return end
-	if msg.k == "attack" then
+	-- Settings: Show My Abilities / Show Other Abilities off = an ability looks like a normal hit
+	-- (the damage is the server's either way)
+	local showAbility = pref(if owner == localPlayer then "ShowMyAbilities" else "ShowOtherAbilities") ~= false
+	if msg.k == "attack" or not showAbility then
 		if c.busy then return end
 		c.busy = true
 		task.spawn(function()
@@ -916,7 +937,9 @@ Remotes:WaitForChild("ChampionAction").OnClientEvent:Connect(function(msg)
 				c.busy = false -- never leave the champion stuck in "busy"
 				return
 			end
-			local fn = abilityFor(c.id)
+			-- (Settings: Disable Ability VFX = the plain cast below: telegraph ring, pose and hit,
+			-- without the ability's own big effects)
+			local fn = if pref("LiteAbilityVfx") == true then nil else abilityFor(c.id)
 			-- the shared animation language (telegraph, glint, ultimate cut-in) for every ability;
 			-- in a pcall so a visual hiccup can never stop the ability itself
 			local castOk, castErr = pcall(startCastFx, c, ctx, impactTime)

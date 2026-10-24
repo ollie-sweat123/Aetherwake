@@ -11,6 +11,7 @@
 --     (both belong to the summon cinematic)
 --   * Atmosphere.Color uses the same per-world colours the HUD already tweens, so they never fight
 --   * cheap: one RenderStepped connection that only moves one invisible part now and then
+--   * HD Mode (Settings) off: no Bloom, no SunRays and no motes (more FPS on slow devices)
 
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
@@ -157,9 +158,22 @@ local function applyLook(look, instant: boolean)
 	end
 end
 
+local emitter: ParticleEmitter? = nil
+
+-- HD Mode: on unless the player switched it off (nil = save not loaded yet = the default, on)
+local function applyHd()
+	local on = player:GetAttribute("Pref_HdMode") ~= false
+	local targets = lookTargets()
+	for _, key in { "bloom", "sunRays" } do
+		local fx = targets[key]
+		if fx and (fx :: any).Enabled ~= on then (fx :: any).Enabled = on end
+	end
+	if emitter and emitter.Enabled ~= on then emitter.Enabled = on end
+end
+player:GetAttributeChangedSignal("Pref_HdMode"):Connect(applyHd)
+
 -- the ambient motes: one invisible box part in the camera (client-only), one emitter
 local motesPart: Part? = nil
-local emitter: ParticleEmitter? = nil
 local currentId = 0
 
 local function setMotes(settings)
@@ -193,6 +207,7 @@ local function ensureMotes(cam: Camera)
 	p.Parent = cam
 	motesPart, emitter = p, e
 	setMotes(PROFILES[currentId].motes)
+	applyHd()
 end
 
 -- which profile: the World attribute (0 = hub, 1-3 = worlds); unknown or missing = hub
