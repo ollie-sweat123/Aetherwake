@@ -205,7 +205,9 @@ make("UITextSizeConstraint", { MaxTextSize = 21, Parent = tipText })
 local continueButton = make("TextButton", { Name = "Continue", Visible = false, Text = "Continue  ▶", Font = Enum.Font.FredokaOne, TextScaled = true,
 	TextColor3 = COLOR.navy, BackgroundColor3 = COLOR.cyan, AutoButtonColor = true, AnchorPoint = Vector2.new(1, 1),
 	Position = UDim2.new(1, -16, 1, -16), Size = UDim2.fromOffset(170, 46), Parent = bg },
-	{ make("UICorner", { CornerRadius = UDim.new(0, 14) }), make("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8) }) })
+	{ make("UICorner", { CornerRadius = UDim.new(0, 14) }), make("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8) }),
+		make("UIStroke", { Thickness = 3, Color = COLOR.navy, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }),
+		make("UIGradient", { Rotation = 90, Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(190, 190, 190)) }) })
 
 gui.Parent = playerGui
 

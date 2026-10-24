@@ -15,6 +15,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Debris = game:GetService("Debris")
 
 local Fx = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Fx"))
+local ButtonFx = require(ReplicatedStorage.Shared:WaitForChild("ButtonFx"))
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local player = Players.LocalPlayer
 
@@ -292,6 +293,8 @@ local grad = Instance.new("UIGradient")
 grad.Rotation = 90
 grad.Color = ColorSequence.new(Color3.fromRGB(70, 90, 140), Color3.fromRGB(20, 22, 40))
 grad.Parent = dashButton
+ButtonFx.gloss(dashButton, 4)
+ButtonFx.feedback(dashButton)
 
 local dashIcon = Instance.new("TextLabel")
 dashIcon.BackgroundTransparency = 1
@@ -348,15 +351,7 @@ barFill.Parent = barBack
 corner(barFill, UDim.new(1, 0))
 
 dashButton.Activated:Connect(function()
-	local sc = dashButton:FindFirstChild("ClickScale") :: UIScale?
-	if not sc then
-		sc = Instance.new("UIScale")
-		sc.Name = "ClickScale"
-		sc.Parent = dashButton
-	end
-	local scale = sc :: UIScale
-	scale.Scale = 0.85
-	TweenService:Create(scale, TweenInfo.new(0.18, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+	ButtonFx.bounce(dashButton)
 	dash()
 end)
 

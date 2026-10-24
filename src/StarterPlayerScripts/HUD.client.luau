@@ -18,6 +18,7 @@ local Format = require(ReplicatedStorage.Shared:WaitForChild("Format"))
 local Quests = require(ReplicatedStorage.Shared:WaitForChild("Quests"))
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local AbilityInfo = require(ReplicatedStorage.Shared:WaitForChild("AbilityInfo"))
+local ButtonFx = require(ReplicatedStorage.Shared:WaitForChild("ButtonFx"))
 local Models = ReplicatedStorage:WaitForChild("ChampionModels")
 local player = Players.LocalPlayer
 
@@ -53,6 +54,9 @@ local THEME = {
 	text = Color3.fromRGB(255, 255, 255),
 	sub = Color3.fromRGB(180, 190, 230),
 	gold = Color3.fromRGB(255, 200, 50),
+	goldLight = Color3.fromRGB(255, 226, 120),
+	ink = Color3.fromRGB(12, 11, 16),   -- (the black of the black-and-gold buttons)
+	ink2 = Color3.fromRGB(46, 40, 34),
 	gem = Color3.fromRGB(80, 200, 255),
 	red = Color3.fromRGB(255, 85, 85),
 	green = Color3.fromRGB(80, 215, 105),
@@ -110,29 +114,20 @@ local function playUiSound(key: string)
 	s:Play()
 end
 
--- Button feedback: a button grows a little under the mouse, squashes when pressed and
--- clicks. One UIScale ("ClickScale") per button does both, so they never fight.
-local hoveredButtons: { [GuiObject]: boolean } = setmetatable({}, { __mode = "k" }) :: any
-local function clickScaleOf(g: GuiObject): UIScale
-	return g:FindFirstChild("ClickScale") or new("UIScale", { Name = "ClickScale", Parent = g })
-end
+-- Button feedback (ButtonFx): a button grows a little under the mouse or controller focus,
+-- squashes while pressed and pops + clicks when the click lands. Every button also gets the
+-- same finish: a gloss on the top half and a soft top-light / bottom-shade (see polish).
 local function bounce(g: GuiObject)
-	local sc = clickScaleOf(g)
-	sc.Scale = 0.88
-	TweenService:Create(sc, TweenInfo.new(0.18, Enum.EasingStyle.Back), { Scale = if hoveredButtons[g] then 1.05 else 1 }):Play()
+	ButtonFx.bounce(g)
 	if g:IsA("GuiButton") then playUiSound("click") end
 end
--- (no hover on touch screens: a tap would leave the button stuck big)
-local function feedback(b: GuiButton)
-	b.MouseEnter:Connect(function()
-		if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then return end
-		hoveredButtons[b] = true
-		TweenService:Create(clickScaleOf(b), TweenInfo.new(0.12, Enum.EasingStyle.Quad), { Scale = 1.05 }):Play()
-	end)
-	b.MouseLeave:Connect(function()
-		hoveredButtons[b] = nil
-		TweenService:Create(clickScaleOf(b), TweenInfo.new(0.12, Enum.EasingStyle.Quad), { Scale = 1 }):Play()
-	end)
+local function feedback(b: GuiButton, target: GuiObject?) ButtonFx.feedback(b, target) end
+-- the shared finish for the HUD's solid buttons: gloss + shade (+ a border that follows the
+-- button's colour when `edge` is given)
+local function polish(b: GuiObject, edge: UIStroke?)
+	ButtonFx.gloss(b)
+	if not b:FindFirstChildOfClass("UIGradient") then ButtonFx.shade(b) end
+	if edge then ButtonFx.tintedEdge(b, edge) end
 end
 
 local function button(props: { [string]: any }, onClick: () -> ()): TextButton
@@ -140,9 +135,11 @@ local function button(props: { [string]: any }, onClick: () -> ()): TextButton
 	props.Color = nil
 	local base = { BackgroundColor3 = color, Font = THEME.font, TextColor3 = THEME.text, TextScaled = true, AutoButtonColor = true, Text = "" }
 	for k, v in props do base[k] = v end
-	local b = new("TextButton", base, { corner(12), stroke(3) })
-	new("UIStroke", { Thickness = 2, Color = THEME.stroke, Parent = b })
+	local edge = stroke(3)
+	local b = new("TextButton", base, { corner(12), edge })
+	new("UIStroke", { Thickness = 2, Color = THEME.stroke, Parent = b }) -- (outline on the text)
 	new("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), Parent = b })
+	polish(b, edge)
 	feedback(b)
 	b.Activated:Connect(function() bounce(b); onClick() end)
 	return b
@@ -347,10 +344,14 @@ end
 local function togglePanel(name: string) showPanel(if openPanel == name then nil else name) end
 
 local function gridButton(order: number, icon: string, text: string, onClick: () -> ())
-	local b = new("TextButton", { Name = text .. "Button", Text = "", AutoButtonColor = true, BackgroundColor3 = THEME.panel, LayoutOrder = order, Parent = grid },
-		{ corner(14), stroke(4, THEME.orange), gradient(Color3.fromRGB(60, 50, 40), Color3.fromRGB(20, 18, 26)) })
+	-- (black and gold, like the menus: a dark fill, a gold-to-orange rim and a gold caption)
+	local rim = stroke(4, Color3.new(1, 1, 1))
+	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(THEME.goldLight, THEME.orange), Parent = rim })
+	local b = new("TextButton", { Name = text .. "Button", Text = "", AutoButtonColor = true, BackgroundColor3 = Color3.new(1, 1, 1), LayoutOrder = order, Parent = grid },
+		{ corner(14), rim, gradient(THEME.ink2, THEME.ink) })
+	ButtonFx.gloss(b)
 	label({ Text = icon, Size = UDim2.new(1, -16, 0.62, 0), Position = UDim2.new(0, 8, 0.06, 0), Parent = b })
-	label({ Text = text, Size = UDim2.new(1, -6, 0.26, 0), Position = UDim2.new(0, 3, 0.7, 0), Parent = b })
+	label({ Text = text, Size = UDim2.new(1, -6, 0.26, 0), Position = UDim2.new(0, 3, 0.7, 0), TextColor3 = THEME.goldLight, Parent = b })
 	feedback(b)
 	b.Activated:Connect(function() bounce(b); onClick() end)
 	return b
@@ -521,7 +522,12 @@ local bestBtn = new("TextButton", { Name = "BestButton", Text = "", AutoButtonCo
 	Size = UDim2.fromOffset(70, 70), BackgroundColor3 = THEME.panel, Parent = bottom }, { corner(35), stroke(4, THEME.gold) })
 label({ Text = "⭐", Size = UDim2.fromScale(0.55, 0.55), Position = UDim2.fromScale(0.225, 0.1), Parent = bestBtn })
 label({ Text = "BEST", Size = UDim2.new(1, 0, 0.24, 0), Position = UDim2.fromScale(0, 0.68), TextColor3 = THEME.gold, Parent = bestBtn })
-for _, b in { autoBtn, hatchBtn, bestBtn } do feedback(b) end
+for _, b in { autoBtn, hatchBtn, bestBtn } do
+	b.BackgroundColor3 = Color3.new(1, 1, 1)
+	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(THEME.ink2, THEME.ink), Parent = b })
+	ButtonFx.gloss(b, 4)
+	feedback(b)
+end
 bestBtn.Activated:Connect(function()
 	bounce(bestBtn)
 	Remotes.EquipBest:InvokeServer()
@@ -999,6 +1005,7 @@ do
 				local tag = new("Frame", { BackgroundColor3 = THEME.green, Size = UDim2.fromOffset(30, 30), Position = UDim2.fromOffset(4, 4), Parent = card }, { corner(15), stroke(2) })
 				label({ Text = "✓", Size = UDim2.fromScale(1, 1), Parent = tag })
 			end
+			feedback(card)
 			card.Activated:Connect(function() playUiSound("click"); selected = item.uid; refreshers.Champions() end)
 		end
 		local slots = math.floor(attrNumber("EquipSlots", (CFG.Combat and CFG.Combat.BaseEquipSlots) or 3))
@@ -2381,6 +2388,7 @@ do
 	ui.skip = new("TextButton", { Name = "SkipButton", Text = "", Visible = false, AutoButtonColor = true, BackgroundColor3 = Color3.new(1, 1, 1),
 		AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -24, 0.93, -8), Size = UDim2.fromOffset(210, 80), Parent = ui.cinematicLayer },
 		{ corner(40), new("UIStroke", { Thickness = 3, Color = SUMMON.cyan, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }), gradient(SUMMON.navy3, SUMMON.navy) })
+	ButtonFx.gloss(ui.skip, 4)
 	label({ Text = "SKIP  ▶", Position = UDim2.new(0, 18, 0, 14), Size = UDim2.new(1, -36, 1, -28), Parent = ui.skip })
 	ui.skipHint = label({ Name = "SkipHint", Visible = false,
 		Text = "", -- (set by skipHintText below: it follows the last device used)
@@ -2669,6 +2677,7 @@ do
 			new("UIStroke", { Thickness = 1.5, Color = THEME.stroke }), -- (outline on the text)
 			new("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) }),
 		})
+		ButtonFx.gloss(equipBtn)
 		local equipping, equippedHere = false, false
 		local messageUntil = 0 -- while os.clock() is below this, EQUIP shows the server's message
 		local function update()
@@ -3154,15 +3163,7 @@ do
 			-- the planet's button (round, so the tutorial's highlight is round too)
 			local hit = new("TextButton", { Name = "Travel" .. w.id, Text = "", AutoButtonColor = false, BackgroundTransparency = 1,
 				Size = UDim2.fromScale(1, 1), ZIndex = 11, Parent = holder }, { new("UICorner", { CornerRadius = UDim.new(1, 0) }) })
-			hit.MouseEnter:Connect(function()
-				if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then return end
-				hoveredButtons[holder] = true
-				TweenService:Create(clickScaleOf(holder), TweenInfo.new(0.12, Enum.EasingStyle.Quad), { Scale = 1.05 }):Play()
-			end)
-			hit.MouseLeave:Connect(function()
-				hoveredButtons[holder] = nil
-				TweenService:Create(clickScaleOf(holder), TweenInfo.new(0.12, Enum.EasingStyle.Quad), { Scale = 1 }):Play()
-			end)
+			feedback(hit, holder) -- (the whole planet grows, not just the see-through button)
 			hit.Activated:Connect(function()
 				bounce(holder)
 				playUiSound("click")
@@ -4190,6 +4191,7 @@ do
 				local tag = new("Frame", { BackgroundColor3 = THEME.green, Size = UDim2.fromOffset(24, 24), Position = UDim2.fromOffset(4, 4), Parent = card }, { corner(12), stroke(2) })
 				label({ Text = "✓", Size = UDim2.fromScale(1, 1), Parent = tag })
 			end
+			feedback(card)
 			card.Activated:Connect(function()
 				playUiSound("click")
 				target = item.uid

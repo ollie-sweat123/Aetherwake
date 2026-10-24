@@ -22,6 +22,7 @@ local Format = require(Shared:WaitForChild("Format"))
 local Anim = require(Shared:WaitForChild("Anim"))
 local Fx = require(Shared:WaitForChild("Fx"))
 local AbilityInfo = require(Shared:WaitForChild("AbilityInfo"))
+local ButtonFx = require(Shared:WaitForChild("ButtonFx"))
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local Models = ReplicatedStorage:WaitForChild("ChampionModels")
 local player = Players.LocalPlayer
@@ -1123,6 +1124,9 @@ local function buildCards()
 			AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 18), Size = UDim2.fromOffset(170, 50), ZIndex = 25, Parent = card },
 			{ corner(16), stroke(3), new("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8) }) })
 		new("UIStroke", { Thickness = 2, Color = STROKE, Parent = pick })
+		ButtonFx.shade(pick)
+		ButtonFx.gloss(pick)
+		ButtonFx.feedback(pick)
 		local hover = card:FindFirstChild("Hover") :: UIScale
 		TweenService:Create(hover, TweenInfo.new(0.45, Enum.EasingStyle.Back), { Scale = 1 }):Play()
 		card.MouseEnter:Connect(function() TweenService:Create(hover, TweenInfo.new(0.15), { Scale = 1.05 }):Play() end)
