@@ -1,6 +1,6 @@
 -- SummonCinematic (CLIENT ONLY): the anime-style summon at the altar.
 --
--- The beats of one summon (lengths come from Shared.SummonTiers: Common ~2 s ... Mythic ~5.5 s):
+-- The beats of one summon (lengths come from Shared.SummonTiers: Common ~1.8 s ... Mythic ~8 s):
 --   1. CHARGE  the altar wakes up: rings spin up, the sigil lights, energy flows from the floor
 --              into the crystal, the scene darkens. Every tier starts the SAME way (so a low roll
 --              isn't spoiled); the tier colour creeps in from ~40 % of the charge.
@@ -41,6 +41,7 @@ local SoundService = game:GetService("SoundService")
 local ContentProvider = game:GetService("ContentProvider")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ProximityPromptService = game:GetService("ProximityPromptService")
+local UserInputService = game:GetService("UserInputService")
 
 local Shared = script.Parent
 local SummonTiers = require(Shared:WaitForChild("SummonTiers"))
@@ -387,6 +388,23 @@ local function getControls()
 		if ok2 then controlsCache = controls end
 	end
 	return controlsCache
+end
+
+-- Phones and tablets: the on-screen JUMP button would sit on top of the summon, so it hides
+-- for the whole sequence. remember() puts Visible back in cleanup, and the watcher stops the
+-- PlayerModule from showing it again mid-summon (cleanup disconnects it before restoring).
+local function hideTouchJump(seq)
+	if not UserInputService.TouchEnabled then return end
+	local lp = Players.LocalPlayer
+	local gui = lp and lp:FindFirstChildOfClass("PlayerGui")
+	local touchGui = gui and gui:FindFirstChild("TouchGui")
+	local jump = touchGui and touchGui:FindFirstChild("JumpButton", true)
+	if not (jump and jump:IsA("GuiObject")) then return end
+	remember(seq, jump, "Visible")
+	jump.Visible = false
+	table.insert(seq.conns, jump:GetPropertyChangedSignal("Visible"):Connect(function()
+		if jump.Visible then jump.Visible = false end
+	end))
 end
 
 ----------------------------------------------------------------------------
@@ -2194,6 +2212,7 @@ local function setup(seq, altar)
 		seq.controlsOff = true
 		try("disable controls", function() controls:Disable() end)
 	end
+	try("touch jump", function() hideTouchJump(seq) end)
 
 	-- lighting
 	seq.savedExposure = Lighting.ExposureCompensation
@@ -2457,10 +2476,24 @@ local function beginHold(seq)
 	if left > 0.05 then later(seq, left, drift) else drift() end
 end
 
+-- tier.silence (Mythic): a held breath between the build and the reveal. The riser and the
+-- ambience cut out, the sphere hangs still, then the reveal hits out of the quiet.
+local function phaseSilence(seq)
+	local s = tonumber(seq.tier.silence) or 0
+	if s <= 0 or seq.quick then return end
+	for snd in seq.sounds do
+		if snd.IsPlaying then fadeSound(seq, snd, 0, math.min(0.15, s * 0.5)) end
+	end
+	local spin0
+	tween(seq, s, function(k) spin0 = spin0 or seq.spin; seq.spin = lerp(spin0, 0.15, k); seq.rumble = 0 end, "out")
+	waitFor(seq, s)
+end
+
 local function runSequence(seq, altar)
 	setup(seq, altar)
 	phaseCharge(seq)
 	phaseBuild(seq)
+	phaseSilence(seq)
 	if seq.multi then phaseLineup(seq) else phaseSingle(seq) end
 	phaseOutro(seq)
 end

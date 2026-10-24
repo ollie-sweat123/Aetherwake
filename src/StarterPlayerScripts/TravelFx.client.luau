@@ -317,6 +317,9 @@ if type(WHOOSH_ID) == "string" then
 	whoosh.SoundId = WHOOSH_ID
 	whoosh.Volume = 0.45
 	whoosh.Parent = gui
+	-- (in the Sound Effects volume group, so the Settings sliders apply to it)
+	local okAudio, Audio = pcall(require, Shared:WaitForChild("Audio"))
+	if okAudio then Audio.Adopt(whoosh, "Sfx") end
 end
 
 gui.Parent = player:WaitForChild("PlayerGui")

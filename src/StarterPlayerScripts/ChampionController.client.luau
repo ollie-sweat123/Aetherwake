@@ -1,7 +1,10 @@
 -- ChampionController (client): draws every player's equipped champions and
 -- animates them: following, running to the target, basic attacks, abilities.
 -- The server decides WHAT happens (Remotes.ChampionAction); this script only
--- decides how it LOOKS. Each champion's ability lives in Shared.Abilities.<Id>.
+-- decides how it LOOKS (and sounds). Each champion's ability lives in Shared.Abilities.<Id>.
+-- Every ability is staged the same way around that module (Shared.AbilityTiming):
+-- anticipation -> a safe step back in the champion's own style -> power-up -> the module
+-- (movement, execution, impact synced with the server's damage) -> recovery to its guard.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -14,12 +17,26 @@ local Format = require(Shared:WaitForChild("Format"))
 local Anim = require(Shared:WaitForChild("Anim"))
 local Fx = require(Shared:WaitForChild("Fx"))
 local AbilityInfo = require(Shared:WaitForChild("AbilityInfo"))
+local AbilityTiming = require(Shared:WaitForChild("AbilityTiming"))
+local Settings = require(Shared:WaitForChild("Settings"))
+local Audio = require(Shared:WaitForChild("Audio"))
+local AudioConfig = require(Shared:WaitForChild("AudioConfig"))
 local AbilityFolder = Shared:WaitForChild("Abilities")
 local Models = ReplicatedStorage:WaitForChild("ChampionModels")
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local enemies = workspace:WaitForChild("Enemies")
 local localPlayer = Players.LocalPlayer
 local P, R, T = Anim.P, Anim.R, Anim.T
+
+-- A setting's value (the server publishes them as Pref_<key>; the default until it has).
+local function pref(key: string): any
+	local v = localPlayer:GetAttribute("Pref_" .. key)
+	if v == nil then
+		local d = Settings.ByKey[key]
+		return d and d.default
+	end
+	return v
+end
 
 local folder = Instance.new("Folder")
 folder.Name = "ClientChampions"
@@ -35,6 +52,7 @@ type Champ = {
 	hits: number, bar: { Frame }, barTweens: { Tween }, barGui: BillboardGui, nameLabel: TextLabel?,
 	style: string, accent: Color3,
 	holdUntil: number, -- hit-stop: the pose stays frozen until this time (os.clock)
+	castId: number,    -- bumps on every ability, so an old one can't end a newer one
 }
 local champs: { [Player]: { Champ } } = {}
 
@@ -203,16 +221,18 @@ local function build(owner: Player, id: string, slot: number): Champ?
 		placed = false, -- first frame snaps it straight to its spot (never on top of the owner)
 		hits = 0, bar = {}, barTweens = {}, barGui = nil :: any, nameLabel = nil, style = info and info.style or "punch",
 		accent = info and Color3.fromHex(info.palette[1]) or rarity.color,
-		holdUntil = 0,
+		holdUntil = 0, castId = 0,
 	}
 	makeAbilityBar(c, def)
-	addAura(c, rarity)
+	if pref("HideAuras") ~= true then addAura(c, rarity) end -- (Settings > Disable Champion Auras)
 	return c
 end
 
 local function rebuild(p: Player)
 	for _, c in champs[p] or {} do stopBarTweens(c); c.model:Destroy() end
 	champs[p] = {}
+	-- Settings > Render Other Champions off: other players' champions aren't drawn at all
+	if p ~= localPlayer and pref("RenderOthers") == false then return end
 	local ids = string.split((p:GetAttribute("EquippedIds") or "") :: string, ",")
 	for i, id in ids do
 		if id ~= "" then
@@ -238,6 +258,12 @@ local function watch(p: Player)
 end
 for _, p in Players:GetPlayers() do task.spawn(watch, p) end
 Players.PlayerAdded:Connect(watch)
+-- these two settings change how champions are built, so rebuild them all when they change
+for _, key in { "RenderOthers", "HideAuras" } do
+	localPlayer:GetAttributeChangedSignal("Pref_" .. key):Connect(function()
+		for _, p in Players:GetPlayers() do task.spawn(rebuild, p) end
+	end)
+end
 Players.PlayerRemoving:Connect(function(p)
 	for _, c in champs[p] or {} do stopBarTweens(c); c.model:Destroy() end
 	champs[p] = nil
@@ -436,6 +462,53 @@ local function attackImpactFx(c: Champ, target: Model)
 end
 
 ----------------------------------------------------------------------------
+-- sounds (ids + layers: Shared.AudioConfig; played through Shared.Audio)
+-- 3D at the champion, so nearby players hear each other's fights fade with distance.
+-- Other players' champions are quieter, and their basic attacks are silent (crowds get loud).
+----------------------------------------------------------------------------
+local layerCache: { [string]: { [string]: string } } = {}
+local function abilityLayers(id: string): { [string]: string }
+	local cached = layerCache[id]
+	if cached then return cached end
+	local info = AbilityInfo[id] or {}
+	local base = AudioConfig.StyleAbility[info.style or "punch"] or AudioConfig.StyleAbility.punch
+	local layers: { [string]: any } = { windup = AudioConfig.DefaultWindup, move = base.move, impact = base.impact }
+	local element = string.lower(tostring(info.element or ""))
+	for _, e in AudioConfig.ElementAbility do
+		if string.find(element, e.match, 1, true) then
+			layers.windup = e.windup or layers.windup
+			layers.impact2 = e.impact2
+			layers.tail = e.tail
+			break
+		end
+	end
+	if AbilityTiming.IsUltimate(id) then
+		layers.impact3 = AudioConfig.UltimateImpact
+		layers.tail = layers.tail or AudioConfig.UltimateTail
+	end
+	for k, v in AudioConfig.ChampionAbility[id] or {} do
+		layers[k] = if v == false then nil else v
+	end
+	layerCache[id] = layers
+	return layers
+end
+
+local function abilitySound(c: Champ, layer: string, opts: { [string]: any }?)
+	local name = abilityLayers(c.id)[layer]
+	if not name then return end
+	local o = if opts then table.clone(opts) else {}
+	o.owner = c.owner
+	Audio.PlayAt(name, c.root, o)
+end
+
+local function attackSound(c: Champ)
+	if c.owner ~= localPlayer and not AudioConfig.OtherPlayersAttacks then return end
+	local list = AudioConfig.StyleAttack[c.style]
+	if not list then return end
+	Audio.PlayAt(list[math.random(1, #list)], c.root, { owner = c.owner, volume = AudioConfig.AttackVolume })
+end
+
+----------------------------------------------------------------------------
 -- abilities
 ----------------------------------------------------------------------------
 local abilityCache = {}
@@ -537,6 +610,7 @@ local function makeCtx(c: Champ, target: Model, amount: number, impactTime: numb
 	ctx.Fx, ctx.madeParts = makeCastFx(ctx.isMine)
 	ctx.Anim, ctx.P, ctx.R, ctx.T = Anim, P, R, T
 	ctx.impactTime = impactTime
+	ctx.startedAt = os.clock() -- (the cast's start: impactTime counts from here)
 	ctx.part = function(name: string) return c.model:FindFirstChild(name) end
 	ctx.weapon = function() return weaponPart(c.model, "RightHand") or weaponPart(c.model, "LeftHand") end
 	ctx.targetPos = function(): Vector3
@@ -605,6 +679,11 @@ local function makeCtx(c: Champ, target: Model, amount: number, impactTime: numb
 		-- the marker flashes white as the hit lands (first, so nothing below can stop it)
 		if ctx.telegraph then ctx.telegraph.Impact() end
 		hitReact(c, target, amount, true)
+		-- impact sound layers, landing exactly with the damage (impact2/3 = element + ultimate weight)
+		abilitySound(c, "impact")
+		abilitySound(c, "impact2", { volume = 0.85 })
+		abilitySound(c, "impact3", { volume = 0.8 })
+		abilitySound(c, "tail", { volume = 0.7, delay = 0.18 })
 		if ctx.isMine then
 			-- bigger abilities shake a little more, but never past the gentle cap
 			gentleShake(0.1 + (tonumber(info.shake) or 0.3) * 0.27, 0.3)
@@ -869,7 +948,235 @@ local function startCastFx(c: Champ, ctx: any, impactTime: number)
 	Fx.Glint(ctx.weapon() or ctx.part("RightHand") or c.root, ctx.accent)
 	-- 3) ultimates: cut-in + FOV punch, only on the owner's own screen
 	--    (own thread: the first call may have to require SummonCinematic)
-	if ultimate and ctx.isMine then task.spawn(playUltimateIntro, c, ctx) end
+	if ultimate and ctx.isMine and not ctx.lite then task.spawn(playUltimateIntro, c, ctx) end
+end
+
+----------------------------------------------------------------------------
+-- ability staging (Shared.AbilityTiming): anticipation -> step back -> power-up, then the
+-- module, then recovery. All of it is visual: the server already decided the hit and its time.
+----------------------------------------------------------------------------
+local STAGE_POSE = {
+	antic = Anim.Mix(P.guard, P.crouch, 0.45),
+	step = { Root = T(0, -0.25, 0, 6), Waist = R(8), RightHip = R(-28), RightKnee = R(-30), LeftHip = R(35), LeftKnee = R(-45),
+		RightShoulder = R(35, 0, 10), RightElbow = R(70), LeftShoulder = R(35, 0, -10), LeftElbow = R(70) },
+	hopUp = P.jump,
+	hopLand = P.land,
+	slide = { Root = T(0, -0.9, 0, 14), Waist = R(-10), RightHip = R(70), RightKnee = R(-95), LeftHip = R(-10), LeftKnee = R(-20),
+		RightShoulder = R(40, 0, 40), LeftShoulder = R(70, 0, -50), LeftElbow = R(30) },
+	dash = { Root = T(0, -0.4, 0, 16), Waist = R(-12), RightShoulder = R(-30, 0, 20), LeftShoulder = R(-30, 0, -20),
+		RightHip = R(30), RightKnee = R(-50), LeftHip = R(-25) },
+	tuck = { Root = T(0, 0.3, 0), RightHip = R(90), LeftHip = R(90), RightKnee = R(-110), LeftKnee = R(-110),
+		RightShoulder = R(60, 0, 10), LeftShoulder = R(60, 0, -10), RightElbow = R(60), LeftElbow = R(60) },
+	glide = { Root = T(0, 0.25, 0, 6), Neck = R(-8), RightShoulder = R(20, 0, 50), LeftShoulder = R(20, 0, -50),
+		RightHip = R(10), LeftHip = R(-5), RightKnee = R(-25), LeftKnee = R(-10) },
+	blink = P.crouch,
+}
+-- the power-up stance, by weapon style
+local POWER_POSE = {
+	punch = { Root = T(0, -0.5, 0, -6), Waist = R(-8), RightShoulder = R(20, 0, 25), RightElbow = R(120), LeftShoulder = R(20, 0, -25), LeftElbow = R(120),
+		RightHip = R(40), LeftHip = R(40), RightKnee = R(-60), LeftKnee = R(-60) },
+	sword = P.slashWind, claws = P.clawWind, hammer = P.overWind, wrench = P.overWind,
+	spear = P.thrustWind, trident = P.thrustWind, staff = P.castRaise, magic = P.castRaise, bow = P.bowDraw,
+}
+POWER_POSE.kick = POWER_POSE.punch
+
+local function flatUnit(v: Vector3): Vector3?
+	local f = Vector3.new(v.X, 0, v.Z)
+	return if f.Magnitude > 0.05 then f.Unit else nil
+end
+
+-- What the safety rays may hit: the world only (never champions, players, enemies or effects).
+local function stageRayParams(): RaycastParams
+	local ignore: { Instance } = { folder, enemies }
+	local fx = workspace:FindFirstChild("ClientEffects")
+	if fx then table.insert(ignore, fx) end
+	for _, p in Players:GetPlayers() do
+		if p.Character then table.insert(ignore, p.Character) end
+	end
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	rp.FilterDescendantsInstances = ignore
+	rp.IgnoreWater = false
+	return rp
+end
+
+-- Where to step back to, or nil when there's no safe spot (then the champion braces in place).
+-- Safe = no wall in the way, ground under the new spot at about the same height, not inside
+-- its owner's personal space and not on top of a teammate.
+local function safeRetreat(c: Champ, target: Model, back: number): Vector3?
+	local pos = c.cf.Position
+	local tp = target.PrimaryPart and target.PrimaryPart.Position or pos + c.cf.LookVector * 5
+	local away = flatUnit(pos - tp) or flatUnit(-c.cf.LookVector) or Vector3.zAxis
+	local rp = stageRayParams()
+	local owner = c.owner.Character and c.owner.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local mates = champs[c.owner] or {}
+	local feetY = pos.Y - GROUND
+	local best: Vector3? = nil
+	local bestDist = 0
+	for _, angle in { 0, 30, -30, 55, -55 } do
+		local dir = CFrame.Angles(0, math.rad(angle), 0):VectorToWorldSpace(away)
+		local dist = back
+		-- 1) walls: a ray at chest height, then shorten to stop short of what it hits
+		local wall = workspace:Raycast(pos + Vector3.new(0, 0.5, 0), dir * (back + 1), rp)
+		if wall then dist = math.min(dist, wall.Distance - 1.2) end
+		-- 2) ground: shrink the step until there's floor under it at about the same height
+		local spot: Vector3? = nil
+		while dist >= 1.5 do
+			local candidate = pos + dir * dist
+			local floor = workspace:Raycast(candidate + Vector3.new(0, 3, 0), Vector3.new(0, -(GROUND + 6), 0), rp)
+			if floor and math.abs(floor.Position.Y - feetY) <= 2 then
+				spot = candidate
+				break
+			end
+			dist -= 0.75
+		end
+		if spot then
+			-- 3) keep out of the owner's space and off teammates
+			if owner then spot = keepClearOfOwner(spot, owner.Position) end
+			local crowded = false
+			for _, m in mates do
+				if m ~= c and (Vector3.new(m.cf.X, 0, m.cf.Z) - Vector3.new(spot.X, 0, spot.Z)).Magnitude < 2.2 then crowded = true end
+			end
+			if not crowded and dist > bestDist then
+				best, bestDist = spot, dist
+				if dist >= back - 0.01 then break end -- the full step straight back: perfect
+			end
+		end
+	end
+	return best
+end
+
+-- the step back itself: path, body pose and a little dust / light per style
+local function retreatMove(c: Champ, ctx: any, dest: Vector3, style: string, duration: number)
+	local from = c.cf.Position
+	local arc = ({ hop = 1.3, leap = 2.6, glide = 0.8 } :: any)[style] or 0
+	local ease = if style == "dash" or style == "blink" then Anim.EASE.snap elseif style == "glide" then Anim.EASE.inout else Anim.EASE.out
+	local Fx_ = ctx.Fx
+	local feet = ctx.ground() + Vector3.new(0, 0.3, 0)
+	if style == "slide" or style == "step" or style == "hop" or style == "leap" then
+		Fx_.Particles(feet, { color = Color3.fromRGB(216, 203, 176), count = if style == "slide" then 12 else 6, speed = 7, size = 0.6, lifetime = 0.4, spread = 70, light = 0 })
+	end
+	if style == "dash" then Fx_.Trail(c.root, ctx.accent, duration + 0.15, 0.9) end
+	if style == "glide" then Fx_.Particles(c.cf.Position, { color = ctx.accent, count = 10, speed = 3, size = 0.35, lifetime = 0.6, spread = 180, gravity = -3 }) end
+	if style == "blink" then Fx_.Burst(c.cf.Position, ctx.accent, 4, 0.25) end
+	local start = os.clock()
+	while true do
+		local k = math.clamp((os.clock() - start) / duration, 0, 1)
+		local e = ease(k)
+		local p = from:Lerp(dest, e) + Vector3.new(0, math.sin(math.pi * k) * arc, 0)
+		local look = ctx.targetPos()
+		local cf = CFrame.lookAt(p, Vector3.new(look.X, p.Y, look.Z))
+		if style == "leap" then cf *= CFrame.Angles(Anim.EASE.inout(k) * math.pi * 2, 0, 0) end -- a backflip
+		c.cf = cf
+		local pose = if style == "hop" then (if k < 0.55 then STAGE_POSE.hopUp else STAGE_POSE.hopLand)
+			elseif style == "leap" then (if k < 0.85 then STAGE_POSE.tuck else STAGE_POSE.hopLand)
+			else STAGE_POSE[style] or STAGE_POSE.step
+		blendPose(c, pose, 0.3)
+		if k >= 1 then break end
+		RunService.RenderStepped:Wait()
+	end
+	if style == "hop" or style == "leap" then Fx_.Ring(CFrame.new(ctx.ground() + Vector3.new(0, 0.15, 0)), Color3.new(1, 1, 1), 1.5, 5, 0.3, 0.12) end
+	if style == "blink" then Fx_.Burst(c.cf.Position, ctx.accent, 4, 0.25) end
+	if style == "slide" then Fx_.Particles(ctx.ground() + Vector3.new(0, 0.3, 0), { color = Color3.fromRGB(216, 203, 176), count = 8, speed = 5, size = 0.6, lifetime = 0.35, spread = 60, light = 0 }) end
+end
+
+-- energy gathers in the champion's colours (lite = the ring only)
+local function powerUpFx(c: Champ, ctx: any, timing: any)
+	local Fx_ = ctx.Fx
+	local d = timing.powerUp
+	local accent = ctx.accent
+	Fx_.Ring(CFrame.new(ctx.ground() + Vector3.new(0, 0.12, 0)), accent, if timing.ultimate then 10 else 7, 1.5, d * 0.85, 0.14)
+	if ctx.lite then return end
+	local focusPart = ctx.weapon() or ctx.part("RightHand") or c.root
+	local count = (if timing.ultimate then 12 else 7) * (if ctx.isMine then 1 else 0.5)
+	for i = 1, math.max(2, math.floor(count)) do
+		local dir = CFrame.Angles(0, math.random() * math.pi * 2, 0):VectorToWorldSpace(Vector3.new(0, 0, 1))
+		local from = c.cf.Position + dir * (3 + math.random() * 1.5) + Vector3.new(0, math.random() * 3 - 1, 0)
+		local orb = Fx_.Part({ Shape = Enum.PartType.Ball, Size = Vector3.one * 0.35, Color = ctx.palette[(i % #ctx.palette) + 1] or accent, CFrame = CFrame.new(from) })
+		local delay = (i / count) * d * 0.4
+		task.delay(delay, function()
+			if not orb.Parent then return end
+			local to = if focusPart and focusPart.Parent then focusPart.Position else c.cf.Position
+			Fx.Tween(orb, math.max(0.12, d * 0.55), { CFrame = CFrame.new(to), Size = Vector3.one * 0.12, Transparency = 0.4 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+			task.delay(math.max(0.12, d * 0.55), function() orb:Destroy() end)
+		end)
+	end
+	Fx_.Light(c.cf.Position, accent, if timing.ultimate then 14 else 9, if timing.ultimate then 3 else 1.8, d)
+	task.delay(d * 0.5, function() if c.model.Parent then Fx_.HitFlash(c.model, accent, 0.15) end end)
+	if timing.ultimate then
+		task.delay(d * 0.8, function()
+			if not c.model.Parent then return end
+			Fx_.Pillar(ctx.ground(), accent, 14, 1.4, 0.45)
+			Fx_.Shockwave(ctx.ground(), accent, 4, 0.4)
+			ctx.shake(0.12, 0.25)
+		end)
+	end
+	task.delay(d * 0.85, function() if focusPart and focusPart.Parent then Fx_.Glint(focusPart, ctx.palette[3] or Color3.new(1, 1, 1)) end end)
+end
+
+-- 1-3: anticipation, step back, power-up. Takes `lead` seconds (the server's timing).
+local function prelude(c: Champ, ctx: any, timing: any, lead: number)
+	local t0 = os.clock()
+	local function untilT(t: number) local d = t - (os.clock() - t0); if d > 0 then task.wait(d) end end
+	local scale = if timing.lead > 0 then lead / timing.lead else 1
+	-- 1) anticipation: face the target and coil
+	ctx.face(ctx.targetPos())
+	task.spawn(ctx.pose, STAGE_POSE.antic, timing.anticipation * scale * 0.9, "out")
+	untilT(timing.anticipation * scale)
+	-- 2) the step back (or a brace in place when there's no safe spot)
+	local retreatTime = timing.retreat * scale
+	local dest = if retreatTime > 0.05 then safeRetreat(c, ctx.target, timing.back) else nil
+	if dest then
+		abilitySound(c, "move", { volume = 0.8 })
+		retreatMove(c, ctx, dest, timing.approach, retreatTime)
+	else
+		task.spawn(ctx.pose, STAGE_POSE.step, retreatTime, "out")
+	end
+	untilT((timing.anticipation + timing.retreat) * scale)
+	-- 3) power-up
+	task.spawn(ctx.pose, POWER_POSE[c.style] or P.castRaise, math.min(0.25, timing.powerUp * scale), "out")
+	powerUpFx(c, ctx, { powerUp = timing.powerUp * scale, ultimate = timing.ultimate })
+	untilT(lead)
+end
+
+-- 5: settle into the guard and walk back to the attack spot
+local function recover(c: Champ, ctx: any, timing: any)
+	task.spawn(ctx.pose, P.guard, 0.3, "inout")
+	local ok, home = pcall(ctx.home)
+	if ok and typeof(home) == "Vector3" and (home - c.cf.Position).Magnitude > 0.6 then
+		ctx.moveTo(home, timing.recover * 0.85)
+	else
+		task.wait(timing.recover * 0.6)
+	end
+end
+
+-- "Lite" or no module: a simple, readable move: power pose, close in, one strong strike.
+local function simpleMove(c: Champ, ctx: any, untilImpact: number)
+	ctx.callout()
+	local t0 = os.clock()
+	local closeIn = math.max(0, untilImpact - 0.45)
+	if closeIn > 0 then task.wait(closeIn) end
+	local ok, home = pcall(ctx.home)
+	if ok and typeof(home) == "Vector3" then ctx.moveTo(home, 0.22) end
+	local left = untilImpact - (os.clock() - t0) - 0.2
+	if left > 0 then task.wait(left) end
+	local clip = ATTACK[c.style] or ATTACK.punch
+	clip(c, ctx.target, 1)
+end
+
+-- Abilities hidden by Settings (Show My / Other Abilities off): it looks like a normal hit
+-- at the same moment the damage lands.
+local function plainAbility(c: Champ, target: Model, amount: number, impactTime: number)
+	local clip = ATTACK[c.style] or ATTACK.punch
+	task.wait(math.max(0, impactTime - Config.Combat.AttackImpact))
+	task.delay(Config.Combat.AttackImpact, function()
+		if target.Parent then
+			attackImpactFx(c, target)
+			hitReact(c, target, amount, false)
+			attackSound(c)
+		end
+	end)
+	clip(c, target, 1)
 end
 
 ----------------------------------------------------------------------------
@@ -898,30 +1205,50 @@ Remotes:WaitForChild("ChampionAction").OnClientEvent:Connect(function(msg)
 				if target.Parent then
 					attackImpactFx(c, target)
 					hitReact(c, target, msg.a, false)
+					attackSound(c)
 				end
 			end)
 			style(c, target, msg.h)
 			c.busy = false
 		end)
 	else -- ability
-		local info = AbilityInfo[c.id]
-		-- msg.it = when the server lands the hit; fall back to the ability's own timing if it's odd
-		local impactTime = math.clamp(tonumber(msg.it) or (info and info.impact) or 1, 0.05, 6)
+		local timing = AbilityTiming.For(c.id)
+		-- msg.it = when the server lands the hit. It wins: if it ever disagrees with our timing,
+		-- the step back and power-up shrink (or grow) so the module's impact still lines up.
+		local impactTime = math.clamp(tonumber(msg.it) or timing.impact, 0.05, 8)
+		local lead = math.clamp(impactTime - timing.moduleImpact, 0, timing.lead * 1.5)
 		c.busy = true
-		c.actionUntil = os.clock() + ((info and info.duration) or 1.6)
+		c.castId += 1
+		local castId = c.castId
+		c.actionUntil = os.clock() + (impactTime - timing.impact) + timing.duration + 0.25
+		local function done()
+			if c.castId == castId then c.busy = false end
+		end
 		task.spawn(function()
+			local isMine = c.owner == localPlayer
+			local show = if isMine then pref("ShowMyAbilities") ~= false else pref("ShowOtherAbilities") ~= false
+			if not show then
+				pcall(plainAbility, c, target, msg.a, impactTime)
+				done()
+				return
+			end
 			local ctxOk, ctx = pcall(makeCtx, c, target, msg.a, impactTime)
 			if not ctxOk then
 				warn("[Ability " .. c.id .. "] " .. tostring(ctx))
-				c.busy = false -- never leave the champion stuck in "busy"
+				done() -- never leave the champion stuck in "busy"
 				return
 			end
-			local fn = abilityFor(c.id)
+			ctx.lite = pref("LiteAbilityVfx") == true -- (Settings > Disable Ability VFX)
 			-- the shared animation language (telegraph, glint, ultimate cut-in) for every ability;
 			-- in a pcall so a visual hiccup can never stop the ability itself
 			local castOk, castErr = pcall(startCastFx, c, ctx, impactTime)
 			if not castOk then warn("[Ability FX " .. c.id .. "] " .. tostring(castErr)) end
 			task.delay(impactTime + 0.05, function() ctx.impact() end) -- safety: the hit always lands on time
+			abilitySound(c, "windup")
+			local preOk, preErr = pcall(prelude, c, ctx, timing, lead)
+			if not preOk then warn("[Ability prelude " .. c.id .. "] " .. tostring(preErr)) end
+			local fn = if ctx.lite then nil else abilityFor(c.id)
+			local untilImpact = math.max(0, impactTime - (os.clock() - (ctx.startedAt or os.clock())))
 			if fn then
 				local ok, err = pcall(fn, ctx)
 				if not ok then
@@ -931,11 +1258,12 @@ Remotes:WaitForChild("ChampionAction").OnClientEvent:Connect(function(msg)
 					sweepParts(ctx.madeParts)
 				end
 			else
-				ctx.callout(); ctx.pose(P.castRaise, 0.3); ctx.wait(math.max(0, impactTime - 0.3)); ctx.pose(P.castPoint, 0.1)
+				pcall(simpleMove, c, ctx, untilImpact)
 			end
+			pcall(recover, c, ctx, timing)
 			-- (no setBar(0) here: the bar was drained at the start, and the next hit may
 			-- already have refilled a segment)
-			c.busy = false
+			done()
 		end)
 	end
 end)

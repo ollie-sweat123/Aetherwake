@@ -8,6 +8,8 @@
 --   palette      main / light / dark / glow colours of the effects
 --   times        seconds for each phase: charge (altar absorbs energy), build (sphere grows),
 --                reveal (champion on screen), outro (fade back). Total = the summon length.
+--                Targets: Common 1-2 s, Uncommon 2-3, Rare 3-4, Epic 4-5, Legendary 5-7, Mythic 7-10.
+--   silence      seconds of quiet between build and reveal (Mythic). Skipped by quick summons.
 --   rings        energy rings around the sphere      ringSpeed     radians per second
 --   counterRotate  every other ring spins the other way
 --   spiral       glowing wisps spiral up into the sphere
@@ -96,7 +98,7 @@ SummonTiers.tiers = {
 	-- small, quick and clean: white/silver sparkle
 	Common = {
 		palette = { main = hex("#D8DDE8"), light = hex("#FFFFFF"), dark = hex("#7D8597"), glow = hex("#EEF3FF") },
-		times = { charge = 0.55, build = 0.5, reveal = 0.75, outro = 0.2 }, -- 2.0 s
+		times = { charge = 0.5, build = 0.45, reveal = 0.7, outro = 0.15 }, -- 1.8 s
 		rings = 1, ringSpeed = 1.6, sphereScale = 0.75, shockwave = 6, flash = 0.06, shake = 0,
 		darken = 0.08, camera = "hold", altarBeams = 2, converge = 10, burst = 20,
 		sounds = { charge = SFX.magicCharge, reveal = SFX.chimeSoft },
@@ -114,7 +116,7 @@ SummonTiers.tiers = {
 	-- blue lightning, counter-rotating rings, small shockwave
 	Rare = {
 		palette = { main = hex("#4AA8FF"), light = hex("#CFE8FF"), dark = hex("#1546A0"), glow = hex("#7CC4FF") },
-		times = { charge = 0.85, build = 1.1, reveal = 1.1, outro = 0.25 }, -- 3.3 s
+		times = { charge = 0.9, build = 1.2, reveal = 1.15, outro = 0.25 }, -- 3.5 s
 		rings = 2, ringSpeed = 2.6, counterRotate = true, lightning = 0.45, sphereScale = 1.05, pulses = 1,
 		shockwave = 11, flash = 0.12, shake = 0.08, darken = 0.2, camera = "push", altarBeams = 4,
 		converge = 20, burst = 36, rays = 10, pose = "victory",
@@ -126,7 +128,7 @@ SummonTiers.tiers = {
 	-- purple runes, floor light shafts, multi-pulse burst, camera move
 	Epic = {
 		palette = { main = hex("#B45CFF"), light = hex("#EBD2FF"), dark = hex("#4A1A8C"), glow = hex("#D39BFF") },
-		times = { charge = 1.0, build = 1.5, reveal = 1.25, outro = 0.25 }, -- 4.0 s
+		times = { charge = 1.05, build = 1.7, reveal = 1.45, outro = 0.3 }, -- 4.5 s
 		rings = 3, ringSpeed = 3.0, counterRotate = true, lightning = 0.3, runes = 6, floorBeams = 6,
 		sphereScale = 1.2, pulses = 3, shockwave = 14, flash = 0.16, shake = 0.12, darken = 0.3,
 		camera = "push", altarBeams = 5, converge = 26, burst = 48, rays = 14, pose = "victory",
@@ -138,7 +140,7 @@ SummonTiers.tiers = {
 	-- gold everything: pillars, big sphere, cinematic orbit, flash, LEGENDARY banner
 	Legendary = {
 		palette = { main = hex("#FFC23D"), light = hex("#FFF3C4"), dark = hex("#A8620A"), glow = hex("#FFE08A") },
-		times = { charge = 1.15, build = 1.95, reveal = 1.45, outro = 0.25 }, -- 4.8 s
+		times = { charge = 1.3, build = 2.4, reveal = 1.9, outro = 0.3 }, -- 5.9 s
 		rings = 3, ringSpeed = 3.4, counterRotate = true, spiral = true, lightning = 0.35, runes = 8,
 		floorBeams = 6, pillars = 4, sphereScale = 1.45, pulses = 3, shockwave = 18, flash = 0.24,
 		shake = 0.18, darken = 0.38, camera = "orbit", altarBeams = 6, converge = 32, burst = 64, rays = 18, raySpeed = 0.3,
@@ -155,7 +157,8 @@ SummonTiers.tiers = {
 	Mythic = {
 		-- (light is a deeper rose than a plain tint, so the shell, bolts and rays read crimson, not pink)
 		palette = { main = hex("#FF2E50"), light = hex("#FF9DAD"), dark = hex("#14000A"), glow = hex("#FF5C76") },
-		times = { charge = 1.3, build = 2.4, reveal = 1.5, outro = 0.3 }, -- 5.5 s
+		times = { charge = 1.5, build = 3.0, reveal = 2.4, outro = 0.4 }, -- 7.3 s + 0.6 s silence = 7.9 s
+		silence = 0.6, -- a held breath before the reveal: the riser cuts out, then the hit
 		rings = 4, ringSpeed = 3.8, counterRotate = true, spiral = true, lightning = 0.85, runes = 8,
 		floorBeams = 8, pillars = 0, sphereScale = 1.6, pulses = 4, shockwave = 24, flash = 0.3,
 		shake = 0.25, darken = 0.5, camera = "zoom", altarBeams = 6, converge = 36, burst = 72, rays = 22, raySpeed = -0.35,
@@ -228,8 +231,9 @@ end
 
 -- total seconds a single summon of this rarity takes (handy for UI timers)
 function SummonTiers.duration(rarityId: string?): number
-	local t = SummonTiers.get(rarityId).times
-	return t.charge + t.build + t.reveal + t.outro
+	local tier = SummonTiers.get(rarityId)
+	local t = tier.times
+	return t.charge + t.build + (tonumber(tier.silence) or 0) + t.reveal + t.outro
 end
 
 return SummonTiers

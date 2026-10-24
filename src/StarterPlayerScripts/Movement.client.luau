@@ -2,6 +2,8 @@
 --   * Q (or the round DASH button on phones) = quick burst in the direction you're moving.
 --     Charges come from the DashCharges attribute (upgrade in the Upgrades menu).
 --   * Press jump again in the air for a double jump. JumpCount = total jumps (2 = double, 3 = triple).
+--   * Hold Left Ctrl (or click the left stick on a controller) to sprint. The server sets the
+--     speed (Settings: Sprint Speed, or Auto-Sprint to always sprint); we only say held / let go.
 --   * AFK: Roblox kicks idle players after 20 minutes, so after 16 idle minutes we ask the
 --     server (AfkRejoin) to rejoin us. The server keeps our world, spot and auto toggles.
 -- Movement runs on the client because the player owns their character's physics,
@@ -15,6 +17,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Debris = game:GetService("Debris")
 
 local Fx = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Fx"))
+local Audio = require(ReplicatedStorage.Shared:WaitForChild("Audio"))
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local player = Players.LocalPlayer
 
@@ -178,6 +181,7 @@ local function dash()
 	charges -= 1
 	dashing = true
 	refreshDashButton()
+	Audio.PlayAt("airWhoosh", r, { volume = 0.9, pitch = 1.15 + math.random() * 0.1 })
 	if trail then trail.Enabled = true end
 	pcall(function()
 		Fx.Ring(CFrame.lookAt(r.Position, r.Position + dir) * CFrame.Angles(math.rad(90), 0, 0), DASH_COLOR, 2, 6, 0.25, 0.15)
@@ -234,6 +238,25 @@ UserInputService.InputBegan:Connect(function(input, processed)
 end)
 
 ----------------------------------------------------------------------------
+-- sprint key (the server decides the speed and ignores spam)
+----------------------------------------------------------------------------
+local SPRINT_KEYS = { [Enum.KeyCode.LeftControl] = true, [Enum.KeyCode.ButtonL3] = true }
+local sprintHeld = false
+local function setSprint(on: boolean)
+	if sprintHeld == on then return end
+	sprintHeld = on
+	local remote = Remotes:FindFirstChild("SetSprint")
+	if remote and remote:IsA("RemoteEvent") then remote:FireServer(on) end
+end
+UserInputService.InputBegan:Connect(function(input, processed)
+	if not processed and SPRINT_KEYS[input.KeyCode] then setSprint(true) end
+end)
+UserInputService.InputEnded:Connect(function(input)
+	if SPRINT_KEYS[input.KeyCode] then setSprint(false) end
+end)
+UserInputService.WindowFocusReleased:Connect(function() setSprint(false) end) -- (alt-tab while holding)
+
+----------------------------------------------------------------------------
 -- multi-jump
 ----------------------------------------------------------------------------
 UserInputService.JumpRequest:Connect(function()
@@ -252,6 +275,7 @@ UserInputService.JumpRequest:Connect(function()
 	r.AssemblyLinearVelocity = Vector3.new(v.X, up * AIR_JUMP_BOOST, v.Z)
 	hum:ChangeState(Enum.HumanoidStateType.Jumping)
 	puff()
+	Audio.PlayAt("airWhoosh2", r, { volume = 0.5, pitch = 1.35 })
 end)
 
 ----------------------------------------------------------------------------

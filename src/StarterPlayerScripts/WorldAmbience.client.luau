@@ -11,6 +11,7 @@
 --     (both belong to the summon cinematic)
 --   * Atmosphere.Color uses the same per-world colours the HUD already tweens, so they never fight
 --   * cheap: one RenderStepped connection that only moves one invisible part now and then
+--   * HD Mode off (the Pref_HdMode setting): Bloom, SunRays and the motes switch off
 
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
@@ -193,6 +194,7 @@ local function ensureMotes(cam: Camera)
 	p.Parent = cam
 	motesPart, emitter = p, e
 	setMotes(PROFILES[currentId].motes)
+	e.Enabled = player:GetAttribute("Pref_HdMode") ~= false
 end
 
 -- which profile: the World attribute (0 = hub, 1-3 = worlds); unknown or missing = hub
@@ -212,7 +214,22 @@ local function refresh(instant: boolean)
 	setMotes(PROFILES[id].motes)
 end
 
+-- HD Mode (Settings > Graphics): off = no Bloom, no SunRays and no floating motes (more FPS).
+-- The haze, colours and time of day stay, so each place keeps its mood.
+local function hdOn(): boolean
+	return player:GetAttribute("Pref_HdMode") ~= false
+end
+local function applyHd()
+	local on = hdOn()
+	local t = lookTargets()
+	if t.bloom then (t.bloom :: BloomEffect).Enabled = on end
+	if t.sunRays then (t.sunRays :: SunRaysEffect).Enabled = on end
+	if emitter then emitter.Enabled = on end
+end
+player:GetAttributeChangedSignal("Pref_HdMode"):Connect(applyHd)
+
 refresh(true) -- on join: no fade, just the right mood
+applyHd()
 player:GetAttributeChangedSignal("World"):Connect(function()
 	-- the very first World value (save loading) is also set instantly; real travel fades
 	local instant = not seenWorld or player:GetAttribute("DataLoaded") ~= true

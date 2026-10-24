@@ -48,12 +48,19 @@ Settings.List = {
 		hint = "Leaderboard tags above players' heads are not in the game yet." },
 
 	-- SOUND ---------------------------------------------------------------------------------
+	-- (Shared.Audio applies these: a group's volume = Master x its own slider; Mute silences all)
+	{ key = "MasterVolume", label = "Master Volume", kind = "slider", default = 80, min = 0, max = 100, step = 1, suffix = "%", section = "Sound", status = "live",
+		hint = "Scales every sound in the game." },
 	{ key = "MusicVolume", label = "Music", kind = "slider", default = 70, min = 0, max = 100, step = 1, suffix = "%", section = "Sound", status = "live",
-		hint = "No music tracks are in the game yet; this volume is ready for them." },
+		hint = "Hub, world, combat and boss music." },
+	{ key = "SfxVolume", label = "Sound Effects", kind = "slider", default = 85, min = 0, max = 100, step = 1, suffix = "%", section = "Sound", status = "live",
+		hint = "Champion attacks and abilities, summons, dashes and travel." },
 	{ key = "AmbienceVolume", label = "Ambience", kind = "slider", default = 70, min = 0, max = 100, step = 1, suffix = "%", section = "Sound", status = "live",
-		hint = "No ambience tracks are in the game yet; this volume is ready for them." },
-	{ key = "GuiVolume", label = "GUI & Effects", kind = "slider", default = 100, min = 0, max = 100, step = 1, suffix = "%", section = "Sound", status = "live",
-		hint = "Button clicks, summon sounds and travel swooshes." },
+		hint = "Birds, waves, wind: the background sound of each world." },
+	{ key = "GuiVolume", label = "Interface", kind = "slider", default = 100, min = 0, max = 100, step = 1, suffix = "%", section = "Sound", status = "live",
+		hint = "Button clicks, menus opening and closing, coin pickups." },
+	{ key = "MuteAll", label = "Mute All Sound", kind = "toggle", default = false, section = "Sound", status = "live",
+		hint = "Silences everything. Your sliders are kept for when you turn it off." },
 
 	-- GAMEPLAY ------------------------------------------------------------------------------
 	{ key = "AutoAbility", label = "Auto Ability", kind = "toggle", default = true, section = "Gameplay", status = "always",
@@ -66,6 +73,8 @@ Settings.List = {
 		section = "Gameplay", status = "live", hint = "Which enemy Auto Attack picks next." },
 	{ key = "AutoSprint", label = "Auto-Sprint", kind = "toggle", default = false, section = "Gameplay", status = "live",
 		hint = "Always sprint. Off: hold Left Ctrl (keyboard) or click the left stick (controller) to sprint." },
+	{ key = "FastSummons", label = "Fast Summons", kind = "toggle", default = false, section = "Gameplay", status = "live",
+		hint = "Summon animations play faster and Common/Uncommon pulls use the short version. Results are the same." },
 	{ key = "SprintSpeed", label = "Sprint Speed", kind = "slider", default = 60, min = 0, max = 100, step = 1, suffix = "%", section = "Gameplay", status = "live",
 		hint = "0% = walking pace (16), 60% = 27, 100% = 34 studs per second." },
 } :: { Def }

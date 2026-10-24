@@ -10,6 +10,8 @@
 -- (one big hit). The server tells every client what each champion is doing
 -- (Remotes.ChampionAction) so they can play the matching animation; the
 -- damage itself is applied here when the swing/ability "lands".
+-- Ability timing (step back, power-up, the move, recovery) comes from Shared.AbilityTiming,
+-- the same file the client animates from; the client never decides damage or timing.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -18,7 +20,7 @@ local Remotes = ReplicatedStorage.Remotes
 local DataService = require(script.Parent.DataService)
 local EnemyService = require(script.Parent.EnemyService)
 local Stats = require(script.Parent.Stats)
-local AbilityInfo = require(ReplicatedStorage.Shared.AbilityInfo)
+local AbilityTiming = require(ReplicatedStorage.Shared.AbilityTiming)
 local QuestEvents = require(script.Parent.QuestEvents)
 
 local CombatService = {}
@@ -204,10 +206,11 @@ local function tick()
 						local power = (if owned then championPower(owned) else 1) * mult
 						local kind, impact, amount
 						if slot.hits >= Config.Combat.HitsPerAbility then
-							local info = AbilityInfo[slot.id] or { impact = 1, duration = 1.6 }
-							kind, impact, amount = "ability", info.impact, power * Config.Combat.AbilityMultiplier
+							local timing = AbilityTiming.For(slot.id)
+							-- (damageScale makes up for the longer staged ability: same damage per second)
+							kind, impact, amount = "ability", timing.impact, power * Config.Combat.AbilityMultiplier * timing.damageScale
 							slot.hits = 0
-							slot.busyUntil = now + info.duration
+							slot.busyUntil = now + timing.duration
 							slot.nextAction = slot.busyUntil + 0.35
 							QuestEvents.Fire(p, "ability", slot.id, 1)
 						else

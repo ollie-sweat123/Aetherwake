@@ -18,6 +18,8 @@ local Format = require(ReplicatedStorage.Shared:WaitForChild("Format"))
 local Quests = require(ReplicatedStorage.Shared:WaitForChild("Quests"))
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local AbilityInfo = require(ReplicatedStorage.Shared:WaitForChild("AbilityInfo"))
+local Settings = require(ReplicatedStorage.Shared:WaitForChild("Settings"))
+local Audio = require(ReplicatedStorage.Shared:WaitForChild("Audio"))
 local Models = ReplicatedStorage:WaitForChild("ChampionModels")
 local player = Players.LocalPlayer
 
@@ -84,30 +86,28 @@ local function label(props: { [string]: any }): TextLabel
 	return l
 end
 
--- Sounds from SummonTiers (only verified ids live there): a soft click for every button
--- and a chime for boss rewards. (Optional: if the module is missing, the HUD stays silent.)
-local UI_SOUNDS: { [string]: Sound } = {}
-do
-	local mod = ReplicatedStorage.Shared:FindFirstChild("SummonTiers")
-	local ok, tiers = pcall(function() return mod and require(mod) end)
-	local sfx = if ok and type(tiers) == "table" and type(tiers.SFX) == "table" then tiers.SFX else {}
-	for key, info in { click = { sfx.uiClick, 0.25 }, chime = { sfx.chimeBright, 0.45 } } do
-		if type(info[1]) == "string" then
-			UI_SOUNDS[key] = new("Sound", { Name = "HUD_" .. key, SoundId = info[1], Volume = info[2], Parent = game:GetService("SoundService") })
-		end
-	end
-end
+-- UI sounds go through Shared.Audio (the Interface volume slider, rate limits, broken-id checks).
+-- The ids live in Shared.AudioConfig. A soft click for every button, a chime for boss rewards.
+local UI_SOUNDS = { click = "uiClick", chime = "uiChime", open = "uiOpen", close = "uiClose" }
 local lastClickAt = 0
 local function playUiSound(key: string)
-	local s = UI_SOUNDS[key]
-	if not s then return end
+	local name = UI_SOUNDS[key]
+	if not name then return end
 	if key == "click" then
 		-- (one click per press, even when two handlers ask for it)
 		if os.clock() - lastClickAt < 0.06 then return end
 		lastClickAt = os.clock()
 	end
-	s.TimePosition = 0
-	s:Play()
+	Audio.Play(name)
+end
+-- A setting's current value (the server publishes them as Pref_<key>; default until it has).
+local function pref(key: string): any
+	local v = player:GetAttribute("Pref_" .. key)
+	if v == nil then
+		local d = Settings.ByKey[key]
+		return d and d.default
+	end
+	return v
 end
 
 -- Button feedback: a button grows a little under the mouse, squashes when pressed and
@@ -301,6 +301,7 @@ local function showPanel(name: string?)
 	-- no menus over the summon cinematic (they'd cover the altar and the champion);
 	-- opening a menu from the result screen closes the result screen first
 	if name and summonPhase == "cinematic" then return end
+	if name ~= openPanel then playUiSound(if name then "open" else "close") end
 	if name and summonPhase == "results" then closeSummonResults(true) end
 	for n, p in panels do
 		panelCloseToken[n] = (panelCloseToken[n] or 0) + 1
@@ -366,7 +367,7 @@ gridButton(4, "🌀", "Teleport", function() togglePanel("Worlds") end)
 gridButton(5, "⏫", "Upgrades", function() togglePanel("Upgrades") end)
 gridButton(6, "📜", "Quests", function() togglePanel("Quests") end)
 gridButton(7, "📰", "Updates", function() togglePanel("Updates") end)
-gridButton(8, "⚙️", "Settings", soon("Settings"))
+gridButton(8, "⚙️", "Settings", function() togglePanel("Settings") end)
 gridButton(9, "❓", "Help", function() togglePanel("Help") end)
 
 ----------------------------------------------------------------------------
@@ -1099,6 +1100,7 @@ do
 		fastSpeed = 3,      -- cinematic speed while fast-forwarding
 		results = 8,        -- the result screen closes after this many seconds without a tap
 		quickAfter = 5,     -- after this many summons this session, Common/Uncommon play the short version
+		fastSummons = 1.6,  -- cinematic speed with Settings > Fast Summons on (results never change)
 		maxCinematic = 30,  -- safety net: never wait on the cinematic longer than this
 		maxHatchCards = 7,  -- Auto Hatch cards on screen at once
 	}
@@ -1349,7 +1351,7 @@ do
 			local delay = (i - 1) * 0.12
 			task.delay(delay, function()
 				TweenService:Create(pop, TweenInfo.new(0.35, Enum.EasingStyle.Back), { Scale = 1 }):Play()
-				bigPullToast(rarityId, def.name, color) -- ("LEGENDARY!" / "MYTHIC!", by rarity name)
+				if pref("SelfPullAnnounce") ~= false then bigPullToast(rarityId, def.name, color) end -- ("LEGENDARY!" / "MYTHIC!", by rarity name)
 			end)
 			task.delay(delay + 2.2, function()
 				if not card.Parent then return end
@@ -2443,21 +2445,25 @@ do
 		return ok and can == true
 	end
 	-- Tells SummonCinematic the speed: x3 while the screen or Space is held, otherwise normal.
+	-- normal speed: 1, or faster with Settings > Fast Summons
+	local function baseSpeed(): number
+		return if pref("FastSummons") == true then TIMING.fastSummons else 1
+	end
 	local function applySpeed()
-		local want = if summonPhase == "cinematic" and (hold.pointerFast or hold.spaceFast) then TIMING.fastSpeed else 1
+		local want = if summonPhase == "cinematic" and (hold.pointerFast or hold.spaceFast) then TIMING.fastSpeed else baseSpeed()
 		if want ~= hold.speed then
 			hold.speed = want
 			cine("SetSpeed", want)
 		end
-		ui.fastChip.Visible = want > 1
+		ui.fastChip.Visible = want >= TIMING.fastSpeed
 	end
 	local function resetHold()
 		table.clear(hold.pointers)
 		hold.pointerFast, hold.spaceFast, hold.spaceDownAt, hold.becameHold = false, false, nil, false
 		hold.pointerToken += 1
 		hold.spaceToken += 1
-		hold.speed = 1
-		cine("SetSpeed", 1) -- (every summon starts at normal speed)
+		hold.speed = baseSpeed()
+		cine("SetSpeed", hold.speed) -- (every summon starts at normal speed: x1, or Fast Summons)
 		ui.fastChip.Visible = false
 	end
 	local function trySkip()
@@ -2824,6 +2830,8 @@ do
 			playedOk = ok and (how == nil or how == "finished" or how == "skipped" or how == "released")
 			finished = true
 		end)
+		-- (Play starts every summon at x1, so Fast Summons' speed goes in once it has started)
+		if hold.speed ~= 1 then cine("SetSpeed", hold.speed) end
 		-- SKIP shows up once the cinematic says it can be skipped (about 0.4 s in)
 		local skipWatch = RunService.Heartbeat:Connect(function()
 			local can = summonPhase == "cinematic" and canSkipNow()
@@ -2844,8 +2852,9 @@ do
 	local function playSummon(list: { any }, count: number)
 		if summonPhase == "results" then closeSummonResults(true, true) end
 		showPanel(nil)
-		-- after a few summons this session, Common/Uncommon singles play the short version
-		local quick = summonsThisSession >= TIMING.quickAfter
+		-- after a few summons this session (or always, with Fast Summons on), Common/Uncommon
+		-- singles play the short version
+		local quick = summonsThisSession >= TIMING.quickAfter or pref("FastSummons") == true
 		summonsThisSession += 1
 		local played = false
 		if getCinematic() then played = runCinematic(list, quick) end
@@ -3955,6 +3964,179 @@ do
 end
 
 ----------------------------------------------------------------------------
+-- Settings panel: built from Shared.Settings (the ONE list of settings), one tab per section.
+-- A change is sent to the server (SetPreference), which checks it, saves it with your data
+-- and publishes it back as the Pref_<key> attribute every script reads. Sound sliders are
+-- heard while you drag them (Audio.Preview); the value is sent when you let go.
+----------------------------------------------------------------------------
+do
+	local ACCENT = Color3.fromRGB(140, 160, 210)
+	local _, body = makePanel("Settings", "Settings", ACCENT, Vector2.new(780, 560))
+	local SOUND_KEYS = { MasterVolume = true, MusicVolume = true, SfxVolume = true, AmbienceVolume = true, GuiVolume = true, MuteAll = true }
+	local tabs = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(0, 170, 1, 0), Parent = body },
+		{ new("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }) })
+	local list = new("ScrollingFrame", { BackgroundColor3 = THEME.panel2, Position = UDim2.fromOffset(186, 0), Size = UDim2.new(1, -186, 1, 0),
+		ScrollBarThickness = 8, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), BorderSizePixel = 0, Parent = body }, {
+		corner(14), new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }),
+		new("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 18), PaddingBottom = UDim.new(0, 10) }),
+	})
+	local section = Settings.Sections[1]
+	local rowUpdaters: { [string]: (any) -> () } = {}
+	local tabButtons: { [string]: TextButton } = {}
+	local sliderConns: { RBXScriptConnection } = {} -- (the drag listeners of the rows on screen)
+
+	local function send(key: string, value: any)
+		if SOUND_KEYS[key] then Audio.Preview(key, value) end
+		fire("SetPreference", key, value)
+	end
+
+	local function row(order: number, d: any): Frame
+		local r = new("Frame", { Name = d.key, BackgroundColor3 = THEME.panel, Size = UDim2.new(1, 0, 0, 70), LayoutOrder = order, Parent = list }, { corner(12) })
+		local live = d.status == "live"
+		label({ Text = d.label, Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -290, 0, 28), TextXAlignment = Enum.TextXAlignment.Left,
+			TextColor3 = if live then THEME.text else THEME.sub, Parent = r })
+		local hint = label({ Text = d.hint or "", Position = UDim2.fromOffset(14, 38), Size = UDim2.new(1, -290, 0, 26), TextScaled = false, TextSize = 14,
+			TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = THEME.sub, Parent = r })
+		hint:FindFirstChildOfClass("UIStroke").Thickness = 1
+		return r
+	end
+	local function pill(r: Frame, text: string, color: Color3)
+		local f = new("Frame", { BackgroundColor3 = color, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0), Size = UDim2.fromOffset(150, 36), Parent = r }, { corner(10), stroke(2) })
+		label({ Text = text, Position = UDim2.fromOffset(8, 5), Size = UDim2.new(1, -16, 1, -10), Parent = f })
+	end
+
+	local function toggleRow(order: number, d: any)
+		local r = row(order, d)
+		local b: TextButton
+		b = button({ AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0), Size = UDim2.fromOffset(120, 42), Parent = r }, function()
+			local nowOn = pref(d.key) == true
+			send(d.key, not nowOn)
+			rowUpdaters[d.key](not nowOn)
+		end)
+		rowUpdaters[d.key] = function(v: any)
+			local on = v == true
+			b.Text = if on then "ON" else "OFF"
+			b.BackgroundColor3 = if on then THEME.green else Color3.fromRGB(90, 94, 120)
+		end
+	end
+
+	local function choiceRow(order: number, d: any)
+		local r = row(order, d)
+		local b: TextButton
+		b = button({ AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0), Size = UDim2.fromOffset(200, 42), Color = THEME.purple, Parent = r }, function()
+			local opts = d.options :: { string }
+			local i = table.find(opts, pref(d.key)) or 1
+			local nextValue = opts[i % #opts + 1]
+			send(d.key, nextValue)
+			rowUpdaters[d.key](nextValue)
+		end)
+		rowUpdaters[d.key] = function(v: any) b.Text = tostring(v) end
+	end
+
+	local function sliderRow(order: number, d: any)
+		local r = row(order, d)
+		local lo, hi, step = d.min or 0, d.max or 100, d.step or 1
+		local value = tonumber(pref(d.key)) or d.default
+		local area = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0), Size = UDim2.fromOffset(270, 46), Parent = r })
+		local valueText = label({ Text = "", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(70, 22), TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = ACCENT, Parent = area })
+		local track = new("TextButton", { Name = "Track", Text = "", AutoButtonColor = false, Selectable = false, BackgroundColor3 = THEME.stroke,
+			Position = UDim2.fromOffset(44, 30), Size = UDim2.new(1, -88, 0, 12), Parent = area }, { corner(6) })
+		local fill = new("Frame", { BackgroundColor3 = ACCENT, Size = UDim2.fromScale(0, 1), Parent = track }, { corner(6) })
+		local knob = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0, 0.5), Size = UDim2.fromOffset(22, 22), Parent = track }, { corner(11), stroke(2) })
+		local function show(v: number)
+			local k = if hi > lo then (v - lo) / (hi - lo) else 0
+			fill.Size = UDim2.fromScale(k, 1)
+			knob.Position = UDim2.fromScale(k, 0.5)
+			valueText.Text = tostring(v) .. (d.suffix or "")
+		end
+		local function clean(v: number): number
+			return math.clamp(math.floor((v - lo) / step + 0.5) * step + lo, lo, hi)
+		end
+		local function set(v: number, commit: boolean)
+			value = clean(v)
+			show(value)
+			if SOUND_KEYS[d.key] then Audio.Preview(d.key, value) end
+			if commit then send(d.key, value) end
+		end
+		rowUpdaters[d.key] = function(v: any) value = tonumber(v) or value; show(value) end
+		button({ Text = "-", Position = UDim2.fromOffset(0, 22), Size = UDim2.fromOffset(36, 28), Parent = area }, function() set(value - step * 5, true) end)
+		button({ Text = "+", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 22), Size = UDim2.fromOffset(36, 28), Parent = area }, function() set(value + step * 5, true) end)
+		-- dragging: mouse or finger on the track
+		local dragging: InputObject? = nil
+		local function fromX(x: number)
+			local k = math.clamp((x - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
+			set(lo + (hi - lo) * k, false)
+		end
+		track.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = input
+				fromX(input.Position.X)
+			end
+		end)
+		table.insert(sliderConns, UserInputService.InputChanged:Connect(function(input)
+			if not dragging then return end
+			if input.UserInputType == Enum.UserInputType.MouseMovement or input == dragging then fromX(input.Position.X) end
+		end))
+		table.insert(sliderConns, UserInputService.InputEnded:Connect(function(input)
+			if not dragging then return end
+			if input == dragging or input.UserInputType == Enum.UserInputType.MouseButton1 then
+				dragging = nil
+				send(d.key, value)
+			end
+		end))
+	end
+
+	local function render()
+		for _, c in list:GetChildren() do if c:IsA("GuiObject") then c:Destroy() end end
+		for _, c in sliderConns do c:Disconnect() end
+		table.clear(sliderConns)
+		table.clear(rowUpdaters)
+		local order = 0
+		for _, d in Settings.List do
+			if d.section == section then
+				order += 1
+				if d.status == "soon" then
+					pill(row(order, d), "COMING SOON", Color3.fromRGB(70, 74, 100))
+				elseif d.status == "always" then
+					pill(row(order, d), "ALWAYS ON", THEME.green:Lerp(THEME.panel, 0.35))
+				elseif d.kind == "toggle" then
+					toggleRow(order, d)
+				elseif d.kind == "slider" then
+					sliderRow(order, d)
+				elseif d.kind == "choice" then
+					choiceRow(order, d)
+				end
+				local up = rowUpdaters[d.key]
+				if up then up(pref(d.key)) end
+			end
+		end
+		if section == "Gameplay" then
+			for _, cfg in Settings.Configs do
+				order += 1
+				-- (the Config panels aren't built yet, so every Config row says so)
+				pill(row(order, { label = cfg.label, hint = "Opens its own menu.", status = "soon" }), "COMING SOON", Color3.fromRGB(70, 74, 100))
+			end
+		end
+		for name, b in tabButtons do
+			b.BackgroundColor3 = if name == section then ACCENT else THEME.panel2
+		end
+	end
+	for i, name in Settings.Sections do
+		tabButtons[name] = button({ Text = name, LayoutOrder = i, Size = UDim2.new(1, 0, 0, 48), Parent = tabs }, function()
+			section = name
+			render()
+		end)
+	end
+	refreshers.Settings = render
+	-- the server's answer (or a refused change) shows straight away
+	player.AttributeChanged:Connect(function(attr: string)
+		if string.sub(attr, 1, 5) ~= "Pref_" or openPanel ~= "Settings" then return end
+		local up = rowUpdaters[string.sub(attr, 6)]
+		if up then up(player:GetAttribute(attr)) end
+	end)
+end
+
+----------------------------------------------------------------------------
 -- Fuse panel (Fusion Machine): a champion + spare copies of the SAME champion -> +1 star
 ----------------------------------------------------------------------------
 do
@@ -4465,8 +4647,10 @@ end
 Remotes.Notify.OnClientEvent:Connect(function(kind, info)
 	if kind == "Reward" and type(info) == "table" and typeof(info.position) == "Vector3" then
 		local gems = tonumber(info.gems) or 0
-		floatText(info.position + Vector3.new(0, 3, 0), "+$" .. Format.Short(tonumber(info.coins) or 0), THEME.gold, info.boss)
-		if gems > 0 then floatText(info.position + Vector3.new(0, 4.5, 0), "+◆" .. gems, THEME.gem, true) end
+		if pref("CoinPopups") ~= false then -- (Settings > Graphics > Show Coin Popups)
+			floatText(info.position + Vector3.new(0, 3, 0), "+$" .. Format.Short(tonumber(info.coins) or 0), THEME.gold, info.boss)
+			if gems > 0 then floatText(info.position + Vector3.new(0, 4.5, 0), "+◆" .. gems, THEME.gem, true) end
+		end
 		if info.boss then bossRewardPopup(info) end
 	end
 end)
